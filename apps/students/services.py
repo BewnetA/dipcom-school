@@ -33,14 +33,21 @@ def _phone_exists(phone: str, exclude_student_id: str | None = None) -> bool:
 
 
 def _student_to_dict(student: Student) -> dict:
+	meta = student.meta if hasattr(student, "meta") and isinstance(student.meta, dict) else {}
+	sex = meta.get("sex") if meta else None
+	if not sex and hasattr(student, "sex"):
+		sex = getattr(student, "sex", None)
 	return {
 		"id": student.id,
 		"name": student.name,
 		"phone": student.phone,
+		"sex": sex,
 		"batchId": student.batch_id or "",
 		"paymentStatus": student.payment_status,
 		"tuitionFee": int(student.tuition_fee),
-		"amountPaid": int(student.amount_paid),
+		# If a record is marked as paid but `amount_paid` is zero (legacy/landing cases),
+		# treat it as fully paid so analytics match the students UI where paid implies no due.
+		"amountPaid": (int(student.amount_paid) if int(student.amount_paid) > 0 else int(student.tuition_fee)) if student.payment_status == "paid" else int(student.amount_paid),
 		"graduated": bool(getattr(student, "graduated", False)),
 		"grade": student.grade,
 		"employmentStatus": student.employment_status,
@@ -48,6 +55,7 @@ def _student_to_dict(student: Student) -> dict:
 		"status": getattr(student, "status", "pending"),
 		"rejectedAt": student.rejected_at.isoformat() if getattr(student, "rejected_at", None) else None,
 		"registrationDate": student.registration_date.isoformat() if student.registration_date else None,
+		"createdAt": student.created_at.isoformat() if getattr(student, "created_at", None) else None,
 		"meta": student.meta if hasattr(student, "meta") and student.meta else {},
 	}
 

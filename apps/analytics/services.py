@@ -3,13 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 
 from apps.batches.services import list_batches
-from apps.landing.services import list_registrations
 from apps.students.services import list_students
 
 from .serializers import serialize_analytics_payload
 
 
-def _registration_trend(registrations: list[dict]) -> list[dict]:
+def _registration_trend(students: list[dict]) -> list[dict]:
 	month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 	today = datetime.now()
 	month_slots = []
@@ -20,8 +19,8 @@ def _registration_trend(registrations: list[dict]) -> list[dict]:
 		month_slots.append((year, month))
 
 	counts = {f"{year}-{str(month).zfill(2)}": 0 for year, month in month_slots}
-	for registration in registrations:
-		created_at = registration.get("createdAt")
+	for student in students:
+		created_at = student.get("createdAt")
 		if not created_at:
 			continue
 		try:
@@ -48,9 +47,20 @@ def _registration_trend(registrations: list[dict]) -> list[dict]:
 
 
 def get_analytics_overview() -> dict:
-	students = list_students({})
+	# Analytics should reflect only students that have reached the Students page.
+	# Pending/rejected approvals remain out of counts until they become approved.
+	students = list_students({"status": "approved"})
 	batches = list_batches()
-	registrations = list_registrations()
+
+	# registration breakdown: online vs in-person, based only on approved students
+	registration_counts = {"online": 0, "in_person": 0}
+	for student in students:
+		type_key = (student.get("registrationType") or "online").replace("-", "_")
+		if type_key == "in_person":
+			registration_counts["in_person"] += 1
+		else:
+			registration_counts["online"] += 1
+
 
 	batch_by_id = {batch["id"]: batch for batch in batches}
 	today = datetime.now()
@@ -91,12 +101,17 @@ def get_analytics_overview() -> dict:
 		)
 
 	recent_registrations = []
-	for registration in registrations[:5]:
-		batch_name = batch_by_id.get(registration.get("batchId", ""), {}).get("name", "N/A")
-		registration_type = str(registration.get("registrationType", "online")).replace("_", " ").title()
+	recent_sorted_students = sorted(
+		students,
+		key=lambda item: item.get("createdAt") or item.get("registrationDate") or "",
+		reverse=True,
+	)
+	for student in recent_sorted_students[:5]:
+		batch_name = batch_by_id.get(student.get("batchId", ""), {}).get("name", "N/A")
+		registration_type = str(student.get("registrationType", "online")).replace("_", " ").title()
 		recent_registrations.append(
 			{
-				"name": registration.get("name", ""),
+				"name": student.get("name", ""),
 				"batch": batch_name,
 				"type": registration_type,
 			}
@@ -133,6 +148,30 @@ def get_analytics_overview() -> dict:
 		{"name": "No", "value": unemployed_count},
 	]
 
+	# gender breakdown (male / female)
+	male_count = len([s for s in students if str(s.get("sex", "")).lower() in ("male", "m")])
+	female_count = len([s for s in students if str(s.get("sex", "")).lower() in ("female", "f", "woman", "women")])
+	gender_breakdown = [
+		{"name": "Male", "value": male_count},
+		{"name": "Female", "value": female_count},
+	]
+
+	# course breakdown: computer vs office (from student.meta.courses)
+	computer_count = 0
+	office_count = 0
+	for s in students:
+		meta = s.get("meta") or {}
+		courses = meta.get("courses") if isinstance(meta, dict) else None
+		if isinstance(courses, dict):
+			if courses.get("computer"):
+				computer_count += 1
+			if courses.get("office"):
+				office_count += 1
+	course_breakdown = [
+		{"name": "Computer Maintenance", "value": computer_count},
+		{"name": "Office Machine Maintenance", "value": office_count},
+	]
+
 	def in_range(value, low, high):
 		return value is not None and low <= value < high
 
@@ -144,7 +183,7 @@ def get_analytics_overview() -> dict:
 		{"name": "90-100", "count": len([s for s in students if s.get("grade") is not None and s.get("grade") >= 90])},
 	]
 
-	registrations_over_time = _registration_trend(registrations)
+	registrations_over_time = _registration_trend(students)
 
 	batch_performance = []
 	for batch in batches:
@@ -160,6 +199,12 @@ def get_analytics_overview() -> dict:
 		"activeBatches": active_batches,
 		"employmentRate": employment_rate,
 		"averageGrade": average_grade,
+		"registrationBreakdown": [
+			{"name": "Online", "value": registration_counts.get("online", 0)},
+			{"name": "In Person", "value": registration_counts.get("in_person", 0)},
+		],
+		"genderBreakdown": gender_breakdown,
+		"courseBreakdown": course_breakdown,
 		"dashboardStats": {
 			"totalStudents": total_students,
 			"activeBatches": active_batches,

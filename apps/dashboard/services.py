@@ -19,5 +19,6 @@ def get_dashboard_overview() -> dict:
 		"employment_breakdown": analytics.get("employmentBreakdown", []),
 		"recent_students": analytics.get("recentStudents", []),
 		"recent_registrations": analytics.get("recentRegistrations", []),
+		"registration_breakdown": analytics.get("registrationBreakdown", []),
 	}
 	return serialize_dashboard_payload(payload)
