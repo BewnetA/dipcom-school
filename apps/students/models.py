@@ -8,6 +8,9 @@ class Student(models.Model):
 	id = models.CharField(primary_key=True, max_length=32)
 	name = models.CharField(max_length=120)
 	phone = models.CharField(max_length=32, blank=True, default="")
+	father_name = models.CharField(max_length=120, blank=True, default="")
+	telegram_user_id = models.BigIntegerField(null=True, blank=True, unique=True)
+	telegram_username = models.CharField(max_length=150, blank=True, default="")
 	batch = models.ForeignKey(
 		"batches.Batch",
 		on_delete=models.SET_NULL,

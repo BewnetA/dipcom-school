@@ -1,6 +1,1 @@
-try:
-	import MySQLdb  # noqa: F401
-except Exception:
-	import pymysql
-
-	pymysql.install_as_MySQLdb()
+# SQLite doesn't need MySQLdb compatibility
