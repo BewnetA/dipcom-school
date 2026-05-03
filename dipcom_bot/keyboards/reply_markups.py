@@ -20,9 +20,10 @@ def get_admin_panel_keyboard():
     """Get admin panel keyboard - 2 buttons per row, NO back to main menu"""
     keyboard = [
         [KeyboardButton("➕ Add Module"), KeyboardButton("🗑 Delete Module")],
-        [KeyboardButton("📤 Upload Resource"), KeyboardButton("📋 List All Modules")],
-        [KeyboardButton("👥 Manage Users"), KeyboardButton("📢 Broadcast Message")],
-        [KeyboardButton("📊 View Statistics")]  # Removed "Back to Main Menu" from here
+        [KeyboardButton("📤 Upload"), KeyboardButton("📋 Modules")],
+        [KeyboardButton("👥 Users"), KeyboardButton("📢 Broadcast")],
+        [KeyboardButton("📣 Follow-Up"), KeyboardButton("✏️ Set Question")],
+        [KeyboardButton("📊 Statistics")]  # Removed "Back to Main Menu" from here
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -30,7 +31,7 @@ def get_user_management_keyboard():
     """Get user management keyboard - 2 buttons per row"""
     keyboard = [
         [KeyboardButton("✅ Enroll User"), KeyboardButton("❌ Remove Enrollment")],
-        [KeyboardButton("📋 List Pending Users"), KeyboardButton("📋 List Enrolled Users")],
+        [KeyboardButton("📋 Pending Users"), KeyboardButton("📋 Enrolled Users")],
         [KeyboardButton("🔙 Back to Admin Panel")]  # This one stays - goes back to admin panel
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)

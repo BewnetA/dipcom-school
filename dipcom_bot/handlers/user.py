@@ -56,6 +56,22 @@ def get_student_by_phone(phone):
         logger.error(f"Error querying student by phone: {e}")
         return None
 
+
+def get_student_by_telegram_id(telegram_id):
+    """Get student from backend by Telegram user ID"""
+    try:
+        conn = get_backend_db()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM students_student WHERE telegram_user_id = ?", (telegram_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return dict(result) if result else None
+    except Exception as e:
+        logger.error(f"Error querying student by telegram_id: {e}")
+        return None
+
+
 def update_student_meta(student_id, user_id, username):
     """Update student meta with telegram info"""
     try:
@@ -448,6 +464,36 @@ async def my_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in my_status: {e}")
         await update.message.reply_text("❌ An error occurred. Please try again later.")
+
+@error_handler
+async def handle_followup_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle yes/no follow-up responses from graduated students"""
+    query = update.callback_query
+    await query.answer()
+
+    data_parts = query.data.split("_")
+    if len(data_parts) < 4:
+        await query.edit_message_text("❌ Invalid response format. Please try again.")
+        return
+
+    answer = data_parts[2]
+    survey_id = "_".join(data_parts[3:])
+    is_employed = answer.lower() == 'yes'
+
+    student = get_student_by_telegram_id(update.effective_user.id)
+    if not student:
+        await query.edit_message_text(
+            "❌ We could not find your student record. Please make sure your Telegram account is linked to your student profile."
+        )
+        return
+
+    success = await db.record_employment_response(student['id'], survey_id, is_employed)
+    if success:
+        response_text = "✅ Thank you! Your answer has been recorded."
+        await query.edit_message_text(response_text)
+    else:
+        await query.answer("❌ Failed to record your response. Please try again later.", show_alert=True)
+
 
 @error_handler
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

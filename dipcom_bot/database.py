@@ -1,5 +1,6 @@
 import sqlite3
 import aiosqlite
+from datetime import date
 from typing import List, Dict, Optional, Any
 from contextlib import asynccontextmanager
 import logging
@@ -279,7 +280,147 @@ class Database:
         except Exception as e:
             logger.error(f"Error deleting resource: {e}")
             return False
-    
+
+    async def get_followup_survey(self, survey_id: str = 'job_followup') -> Optional[Dict]:
+        """Return the stored follow-up survey record"""
+        try:
+            async with self.get_connection() as conn:
+                cursor = await conn.execute(
+                    'SELECT * FROM surveys_survey WHERE id = ?',
+                    (survey_id,)
+                )
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Error getting follow-up survey: {e}")
+            return None
+
+    async def ensure_followup_survey(self, question: str = None, survey_id: str = 'job_followup') -> dict:
+        """Create or update the follow-up survey record"""
+        current = await self.get_followup_survey(survey_id)
+        if current:
+            if question is not None and current.get('question') != question:
+                await self.update_followup_survey_question(question, survey_id)
+                current = await self.get_followup_survey(survey_id)
+            return current
+
+        if question is None:
+            question = "Have you found a job after graduation? Please answer Yes or No."
+
+        async with self.get_connection() as conn:
+            await conn.execute(
+                '''INSERT INTO surveys_survey (id, question, survey_type, last_sent, response_yes, response_no)
+                   VALUES (?, ?, ?, ?, 0, 0)''',
+                (survey_id, question, 'yes_no', date.today().isoformat())
+            )
+            return {
+                'id': survey_id,
+                'question': question,
+                'type': 'yes_no',
+                'lastSent': date.today().isoformat(),
+                'responses': {'yes': 0, 'no': 0}
+            }
+
+    async def update_followup_survey_question(self, question: str, survey_id: str = 'job_followup') -> Optional[Dict]:
+        """Update the follow-up survey question text"""
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    'UPDATE surveys_survey SET question = ? WHERE id = ?',
+                    (question, survey_id)
+                )
+            return await self.get_followup_survey(survey_id)
+        except Exception as e:
+            logger.error(f"Error updating follow-up survey question: {e}")
+            return None
+
+    async def update_followup_survey_last_sent(self, survey_id: str = 'job_followup') -> bool:
+        """Update the last_sent date for the follow-up survey"""
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    'UPDATE surveys_survey SET last_sent = ? WHERE id = ?',
+                    (date.today().isoformat(), survey_id)
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Error updating follow-up survey last_sent: {e}")
+            return False
+
+    async def get_graduated_students(self) -> List[Dict]:
+        """Get all graduated students who have a Telegram user id"""
+        try:
+            async with self.get_connection() as conn:
+                cursor = await conn.execute(
+                    'SELECT id, telegram_user_id, name FROM students_student '
+                    'WHERE graduated = 1 AND telegram_user_id IS NOT NULL'
+                )
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error getting graduated students: {e}")
+            return []
+
+    async def record_employment_response(self, student_id: str, survey_id: str, is_employed: bool) -> bool:
+        """Insert or update the student's employment response for a follow-up survey"""
+        try:
+            async with self.get_connection() as conn:
+                cursor = await conn.execute(
+                    'SELECT id, is_employed FROM students_employmentcheckin '
+                    'WHERE student_id = ? AND survey_id = ?',
+                    (student_id, survey_id)
+                )
+                existing = await cursor.fetchone()
+
+                if existing:
+                    previous_answer = bool(existing['is_employed'])
+                    if previous_answer == is_employed:
+                        return True
+
+                    # Update the existing response and adjust counts
+                    await conn.execute(
+                        'UPDATE students_employmentcheckin '
+                        'SET is_employed = ?, checked_at = CURRENT_TIMESTAMP '
+                        'WHERE id = ?',
+                        (int(is_employed), existing['id'])
+                    )
+
+                    if is_employed:
+                        await conn.execute(
+                            'UPDATE surveys_survey '
+                            'SET response_yes = response_yes + 1, response_no = response_no - 1 '
+                            'WHERE id = ?',
+                            (survey_id,)
+                        )
+                    else:
+                        await conn.execute(
+                            'UPDATE surveys_survey '
+                            'SET response_no = response_no + 1, response_yes = response_yes - 1 '
+                            'WHERE id = ?',
+                            (survey_id,)
+                        )
+                    return True
+
+                # Create a new response record
+                await conn.execute(
+                    'INSERT INTO students_employmentcheckin (student_id, survey_id, is_employed, checked_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+                    (student_id, survey_id, int(is_employed))
+                )
+                if is_employed:
+                    await conn.execute(
+                        'UPDATE surveys_survey SET response_yes = response_yes + 1 WHERE id = ?',
+                        (survey_id,)
+                    )
+                else:
+                    await conn.execute(
+                        'UPDATE surveys_survey SET response_no = response_no + 1 WHERE id = ?',
+                        (survey_id,)
+                    )
+                return True
+        except Exception as e:
+            logger.error(f"Error recording employment response: {e}")
+            return False
+
     # Logging
     async def log_action(self, user_id: int, action: str, details: str = None):
         """Log user actions"""

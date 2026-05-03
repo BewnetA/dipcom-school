@@ -41,6 +41,9 @@ from handlers.admin import (
     handle_enroll_callback,
     remove_enrollment_start,
     handle_remove_callback,
+    enroll_user_restart,
+    enroll_user_cancel,
+    remove_enrollment_cancel,
     list_users,
     broadcast_start, 
     broadcast_message, 
@@ -48,6 +51,10 @@ from handlers.admin import (
     broadcast_confirmation_callback, 
     view_statistics,
     handle_approval_callback,
+    send_followup_start,
+    handle_followup_confirm,
+    set_followup_question_start,
+    set_followup_question_receive,
     ADD_MODULE_NAME, 
     ADD_MODULE_FILE, 
     DELETE_MODULE, 
@@ -55,12 +62,14 @@ from handlers.admin import (
     UPLOAD_FILE, 
     BROADCAST_MESSAGE, 
     ENROLL_USER, 
-    REMOVE_ENROLLMENT
+    REMOVE_ENROLLMENT,
+    FOLLOWUP_CONFIRM,
+    SET_FOLLOWUP_QUESTION
 )
 
 from handlers.user import (
     start, register_name, register_phone, view_modules, my_status,
-    handle_callback, cancel,
+    handle_callback, handle_followup_response, cancel,
     REGISTER_NAME, REGISTER_PHONE
 )
 
@@ -135,7 +144,7 @@ class ResourceBot:
         
         # Admin upload resource conversation
         upload_conv = ConversationHandler(
-            entry_points=[MessageHandler(filters.Regex('^📤 Upload Resource$'), upload_resource_start)],
+            entry_points=[MessageHandler(filters.Regex('^📤 Upload$'), upload_resource_start)],
             states={
                 UPLOAD_RESOURCE_SELECT: [CallbackQueryHandler(handle_upload_callback)],
                 UPLOAD_FILE: [
@@ -151,7 +160,7 @@ class ResourceBot:
         
         # Admin broadcast conversation - UPDATED
         broadcast_conv = ConversationHandler(
-            entry_points=[MessageHandler(filters.Regex('^📢 Broadcast Message$'), broadcast_start)],
+            entry_points=[MessageHandler(filters.Regex('^📢 Broadcast$'), broadcast_start)],
             states={
                 BROADCAST_MESSAGE: [
                     MessageHandler(filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL, broadcast_message),
@@ -167,7 +176,13 @@ class ResourceBot:
         enroll_conv = ConversationHandler(
             entry_points=[MessageHandler(filters.Regex('^✅ Enroll User$'), enroll_user_start)],
             states={
-                ENROLL_USER: [CallbackQueryHandler(handle_enroll_callback)],
+                ENROLL_USER: [
+                    CallbackQueryHandler(handle_enroll_callback),
+                    MessageHandler(filters.Regex('^✅ Enroll User$'), enroll_user_restart),
+                    MessageHandler(filters.Regex('^🔙 Back to Admin Panel$'), admin_panel),
+                    MessageHandler(filters.Regex('^🔙 Back to User Management$'), manage_users),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, enroll_user_cancel),
+                ],
             },
             fallbacks=[CommandHandler('cancel', cancel)],
             name="enroll_user",
@@ -180,13 +195,43 @@ class ResourceBot:
         remove_enroll_conv = ConversationHandler(
             entry_points=[MessageHandler(filters.Regex('^❌ Remove Enrollment$'), remove_enrollment_start)],
             states={
-                REMOVE_ENROLLMENT: [CallbackQueryHandler(handle_remove_callback)],
+                REMOVE_ENROLLMENT: [
+                    CallbackQueryHandler(handle_remove_callback),
+                    MessageHandler(filters.Regex('^❌ Remove Enrollment$'), remove_enrollment_start),
+                    MessageHandler(filters.Regex('^🔙 Back to Admin Panel$'), admin_panel),
+                    MessageHandler(filters.Regex('^🔙 Back to User Management$'), manage_users),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, remove_enrollment_cancel),
+                ],
             },
             fallbacks=[CommandHandler('cancel', cancel)],
             name="remove_enrollment",
             persistent=False,
             per_message=False,
             per_chat=True
+        )
+
+        # Admin follow-up broadcast conversation
+        followup_conv = ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex('^📣 Follow-Up$'), send_followup_start)],
+            states={
+                FOLLOWUP_CONFIRM: [CallbackQueryHandler(handle_followup_confirm, pattern='^(confirm_followup_send|cancel_followup_send)$')],
+            },
+            fallbacks=[CommandHandler('cancel', cancel)],
+            name="followup",
+            persistent=False,
+            per_message=False,
+            per_chat=True
+        )
+
+        # Admin follow-up question edit conversation
+        set_followup_question_conv = ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex('^✏️ Set Question$'), set_followup_question_start)],
+            states={
+                SET_FOLLOWUP_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_followup_question_receive)],
+            },
+            fallbacks=[CommandHandler('cancel', cancel)],
+            name="set_followup_question",
+            persistent=False
         )
         
         # Add all handlers
@@ -197,7 +242,9 @@ class ResourceBot:
         self.application.add_handler(broadcast_conv)
         self.application.add_handler(enroll_conv)
         self.application.add_handler(remove_enroll_conv)
-        
+        self.application.add_handler(followup_conv)
+        self.application.add_handler(set_followup_question_conv)
+
         # Command handlers
         self.application.add_handler(CommandHandler('admin', admin_panel))
         self.application.add_handler(CommandHandler('status', my_status))
@@ -206,17 +253,18 @@ class ResourceBot:
         self.application.add_handler(MessageHandler(filters.Regex('^📚 View Modules$'), view_modules))
         self.application.add_handler(MessageHandler(filters.Regex('^ℹ️ My Status$'), my_status))
         self.application.add_handler(MessageHandler(filters.Regex('^📊 Admin Panel$'), admin_panel))
-        self.application.add_handler(MessageHandler(filters.Regex('^👥 Manage Users$'), manage_users))
-        self.application.add_handler(MessageHandler(filters.Regex('^📋 List All Modules$'), list_modules))
+        self.application.add_handler(MessageHandler(filters.Regex('^👥 Users$'), manage_users))
+        self.application.add_handler(MessageHandler(filters.Regex('^📋 Modules$'), list_modules))
         self.application.add_handler(MessageHandler(filters.Regex('^👥 View Users$'), manage_users))
-        self.application.add_handler(MessageHandler(filters.Regex('^📋 List Pending Users$'), list_users))
-        self.application.add_handler(MessageHandler(filters.Regex('^📋 List Enrolled Users$'), list_users))
-        self.application.add_handler(MessageHandler(filters.Regex('^📊 View Statistics$'), view_statistics))
+        self.application.add_handler(MessageHandler(filters.Regex('^📋 Pending Users$'), list_users))
+        self.application.add_handler(MessageHandler(filters.Regex('^📋 Enrolled Users$'), list_users))
+        self.application.add_handler(MessageHandler(filters.Regex('^📊 Statistics$'), view_statistics))
         self.application.add_handler(MessageHandler(filters.Regex('^🔙 Back to Admin Panel$'), admin_panel))
         self.application.add_handler(MessageHandler(filters.Regex('^🔙 Back to Main Menu$'), admin_panel))
         self.application.add_handler(CallbackQueryHandler(handle_approval_callback, pattern='^(approve_user_|reject_user_|view_user_)'))
         # Add broadcast confirmation callback handler
         self.application.add_handler(CallbackQueryHandler(broadcast_confirmation_callback, pattern='^(confirm_broadcast|cancel_broadcast)$'))
+        self.application.add_handler(CallbackQueryHandler(handle_followup_response, pattern='^employment_followup_'))
         # Callback query handler
         self.application.add_handler(CallbackQueryHandler(handle_callback))
         

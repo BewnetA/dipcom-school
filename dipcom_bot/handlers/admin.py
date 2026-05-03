@@ -16,6 +16,8 @@ UPLOAD_FILE = 5
 BROADCAST_MESSAGE = 6
 ENROLL_USER = 7
 REMOVE_ENROLLMENT = 8
+FOLLOWUP_CONFIRM = 9
+SET_FOLLOWUP_QUESTION = 10
 
 @admin_required
 @error_handler
@@ -26,6 +28,137 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_admin_panel_keyboard(),
         parse_mode='Markdown'
     )
+
+@admin_required
+@error_handler
+async def send_followup_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the follow-up survey send flow"""
+    survey = await db.ensure_followup_survey()
+    graduated_students = await db.get_graduated_students()
+
+    if not graduated_students:
+        await update.message.reply_text(
+            "⚠️ No graduated students found with Telegram contact information.\n\n"
+            "Make sure graduated students have their Telegram ID attached to their student profile before sending the follow-up.",
+            reply_markup=get_admin_panel_keyboard()
+        )
+        return ConversationHandler.END
+
+    question = survey.get('question', "Have you found a job after graduation? Please answer Yes or No.")
+    count = len(graduated_students)
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Send to Graduated Students", callback_data="confirm_followup_send")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_followup_send")]
+    ])
+
+    await update.message.reply_text(
+        f"📣 *Follow-Up Survey*\n\n"
+        f"*Question:* {question}\n\n"
+        f"This will be sent to *{count}* graduated student(s) who have a Telegram account attached.\n\n"
+        "Do you want to send this follow-up now?",
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
+    return FOLLOWUP_CONFIRM
+
+@admin_required
+@error_handler
+async def handle_followup_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send the follow-up question after admin confirmation"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == 'cancel_followup_send':
+        await query.edit_message_text(
+            "❌ Follow-up send cancelled.",
+            reply_markup=get_admin_panel_keyboard()
+        )
+        return ConversationHandler.END
+
+    survey = await db.ensure_followup_survey()
+    graduated_students = await db.get_graduated_students()
+    question = survey.get('question', "Have you found a job after graduation? Please answer Yes or No.")
+    survey_id = survey.get('id', 'job_followup')
+
+    if not graduated_students:
+        await query.edit_message_text(
+            "⚠️ No graduated students found to send the follow-up.",
+            reply_markup=get_admin_panel_keyboard()
+        )
+        return ConversationHandler.END
+
+    yes_button = InlineKeyboardButton("✅ Yes", callback_data=f"employment_followup_yes_{survey_id}")
+    no_button = InlineKeyboardButton("❌ No", callback_data=f"employment_followup_no_{survey_id}")
+    inline_keyboard = InlineKeyboardMarkup([[yes_button, no_button]])
+
+    sent_count = 0
+    failed_count = 0
+    for student in graduated_students:
+        telegram_id = student.get('telegram_user_id')
+        try:
+            await context.bot.send_message(
+                telegram_id,
+                f"📣 *Follow-Up Question*\n\n{question}",
+                parse_mode='Markdown',
+                reply_markup=inline_keyboard
+            )
+            sent_count += 1
+        except Exception as e:
+            logger.error(f"Failed to send follow-up to student {student['id']}: {e}")
+            failed_count += 1
+
+    await db.update_followup_survey_last_sent(survey_id)
+    await query.edit_message_text(
+        f"✅ Follow-up completed. Sent to *{sent_count}* graduated student(s) and failed for *{failed_count}* student(s).",
+        parse_mode='Markdown',
+        reply_markup=get_admin_panel_keyboard()
+    )
+
+    await db.log_action(update.effective_user.id, "send_followup", f"Sent follow-up to {sent_count} graduated students")
+    return ConversationHandler.END
+
+@admin_required
+@error_handler
+async def set_followup_question_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ask admin to provide a new follow-up question"""
+    survey = await db.ensure_followup_survey()
+    current_question = survey.get('question', "Have you found a job after graduation? Please answer Yes or No.")
+
+    await update.message.reply_text(
+        "✏️ *Update Follow-Up Question*\n\n"
+        f"Current question: {current_question}\n\n"
+        "Send the new follow-up question that will be sent to graduated students.",
+        parse_mode='Markdown'
+    )
+    return SET_FOLLOWUP_QUESTION
+
+@admin_required
+@error_handler
+async def set_followup_question_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Save the new follow-up question text"""
+    question_text = update.message.text.strip()
+    if len(question_text) < 10:
+        await update.message.reply_text(
+            "❌ The question is too short. Please send a clear yes/no question with at least 10 characters."
+        )
+        return SET_FOLLOWUP_QUESTION
+
+    survey = await db.update_followup_survey_question(question_text)
+    if not survey:
+        await update.message.reply_text(
+            "❌ Failed to update the follow-up question. Please try again."
+        )
+        return SET_FOLLOWUP_QUESTION
+
+    await update.message.reply_text(
+        "✅ Follow-up question updated successfully.\n\n"
+        f"New question: {question_text}",
+        reply_markup=get_admin_panel_keyboard(),
+        parse_mode='Markdown'
+    )
+    await db.log_action(update.effective_user.id, "update_followup_question", f"Set follow-up question: {question_text}")
+    return ConversationHandler.END
 
 @admin_required
 @error_handler
@@ -526,6 +659,7 @@ async def enroll_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user in pending_users:
         keyboard.append([InlineKeyboardButton(f"{user['full_name']} (ID: {user['user_id']})", 
                                              callback_data=f"enroll_{user['user_id']}")])
+    keyboard.append([InlineKeyboardButton("🔙 Cancel", callback_data="back_to_user_management")])
     
     await update.message.reply_text(
         "✅ *Enroll User*\n\nSelect a user to enroll:",
@@ -548,6 +682,7 @@ async def remove_enrollment_start(update: Update, context: ContextTypes.DEFAULT_
     for user in enrolled_users:
         keyboard.append([InlineKeyboardButton(f"{user['full_name']} (ID: {user['user_id']})", 
                                              callback_data=f"remove_{user['user_id']}")])
+    keyboard.append([InlineKeyboardButton("🔙 Cancel", callback_data="back_to_user_management")])
     
     await update.message.reply_text(
         "❌ *Remove Enrollment*\n\nSelect a user to remove enrollment:",
@@ -668,6 +803,33 @@ async def handle_enroll_callback(update: Update, context: ContextTypes.DEFAULT_T
             )
     
     return ConversationHandler.END
+
+@admin_required
+@error_handler
+async def enroll_user_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Restart the enroll user flow if the admin clicks the button again while still in state."""
+    return await enroll_user_start(update, context)
+
+@admin_required
+@error_handler
+async def enroll_user_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel enroll user operation and return to user management."""
+    await update.message.reply_text(
+        "❌ Enrollment process cancelled. Use the user management menu to start again.",
+        reply_markup=get_user_management_keyboard()
+    )
+    return ConversationHandler.END
+
+@admin_required
+@error_handler
+async def remove_enrollment_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel remove enrollment operation and return to user management."""
+    await update.message.reply_text(
+        "❌ Remove enrollment process cancelled. Use the user management menu to start again.",
+        reply_markup=get_user_management_keyboard()
+    )
+    return ConversationHandler.END
+
 @admin_required
 @error_handler
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -726,7 +888,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if broadcast is active
     if not context.user_data.get('broadcast_active', False):
         await update.message.reply_text(
-            "❌ Broadcast is not active. Use 'Broadcast Message' from admin panel to start.",
+            "❌ Broadcast is not active. Use 'Broadcast' from admin panel to start.",
             reply_markup=get_admin_panel_keyboard()
         )
         return ConversationHandler.END
@@ -751,12 +913,15 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if the message is a button press (admin panel buttons)
     button_texts = [
-        "➕ Add Module", "🗑 Delete Module", "📤 Upload Resource", 
-        "📋 List All Modules", "👥 Manage Users", "📢 Broadcast Message",
-        "📊 View Statistics", "🔙 Back to Admin Panel", "👥 View Users",
+        "➕ Add Module", "🗑 Delete Module", "📤 Upload", 
+        "📋 Modules", "👥 Users", "📢 Broadcast", "📣 Follow-Up", "✏️ Set Question",
+        "📊 Statistics", "🔙 Back to Admin Panel", "👥 View Users",
         "📊 Admin Panel", "✅ Enroll User", "❌ Remove Enrollment",
-        "📋 List Pending Users", "📋 List Enrolled Users", "🔙 Back to User Management",
-        "📚 View Modules", "ℹ️ My Status"
+        "📋 Pending Users", "📋 Enrolled Users", "🔙 Back to User Management",
+        "📚 View Modules", "ℹ️ My Status",
+        # Keep legacy labels for compatibility
+        "📤 Upload Resource", "📋 List All Modules", "👥 Manage Users", "📢 Broadcast Message",
+        "📋 List Pending Users", "📋 List Enrolled Users", "📊 View Statistics"
     ]
     
     if update.message.text and update.message.text in button_texts:
