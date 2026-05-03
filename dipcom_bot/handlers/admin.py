@@ -109,11 +109,20 @@ async def handle_followup_confirm(update: Update, context: ContextTypes.DEFAULT_
             failed_count += 1
 
     await db.update_followup_survey_last_sent(survey_id)
-    await query.edit_message_text(
-        f"✅ Follow-up completed. Sent to *{sent_count}* graduated student(s) and failed for *{failed_count}* student(s).",
-        parse_mode='Markdown',
-        reply_markup=get_admin_panel_keyboard()
-    )
+    try:
+        await query.edit_message_text(
+            f"✅ Follow-up completed. Sent to *{sent_count}* graduated student(s) and failed for *{failed_count}* student(s).",
+            parse_mode='Markdown',
+            reply_markup=get_admin_panel_keyboard()
+        )
+    except Exception as e:
+        logger.error(f"Failed to edit followup completion message: {e}")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"✅ Follow-up completed. Sent to *{sent_count}* graduated student(s) and failed for *{failed_count}* student(s).",
+            parse_mode='Markdown',
+            reply_markup=get_admin_panel_keyboard()
+        )
 
     await db.log_action(update.effective_user.id, "send_followup", f"Sent follow-up to {sent_count} graduated students")
     return ConversationHandler.END
@@ -951,69 +960,100 @@ async def broadcast_confirmation_callback(update: Update, context: ContextTypes.
         success_count = 0
         fail_count = 0
         
-        # Send progress message
-        progress_msg = await query.edit_message_text(
-            f"📢 Broadcasting in progress...\n0/{len(users)} users",
-            reply_markup=None
-        )
-        
-        for i, user in enumerate(users):
-            try:
-                msg_data = broadcast_content.get('data')
-                
-                if broadcast_content.get('type') == 'text':
-                    await context.bot.send_message(
-                        chat_id=user['user_id'],
-                        text=msg_data.text
-                    )
-                elif msg_data.photo:
-                    await context.bot.send_photo(
-                        chat_id=user['user_id'],
-                        photo=msg_data.photo[-1].file_id,
-                        caption=msg_data.caption
-                    )
-                elif msg_data.video:
-                    await context.bot.send_video(
-                        chat_id=user['user_id'],
-                        video=msg_data.video.file_id,
-                        caption=msg_data.caption
-                    )
-                elif msg_data.document:
-                    await context.bot.send_document(
-                        chat_id=user['user_id'],
-                        document=msg_data.document.file_id,
-                        caption=msg_data.caption
-                    )
-                
-                success_count += 1
-                
-                # Update progress every 10 users
-                if (i + 1) % 10 == 0:
-                    await progress_msg.edit_text(
-                        f"📢 Broadcasting in progress...\n{i + 1}/{len(users)} users sent"
-                    )
+        try:
+            # Send progress message
+            progress_msg = await query.edit_message_text(
+                f"📢 Broadcasting in progress...\n0/{len(users)} users",
+                reply_markup=None
+            )
+            
+            for i, user in enumerate(users):
+                try:
+                    msg_data = broadcast_content.get('data')
                     
+                    if broadcast_content.get('type') == 'text':
+                        await context.bot.send_message(
+                            chat_id=user['user_id'],
+                            text=msg_data.text
+                        )
+                    elif msg_data.photo:
+                        await context.bot.send_photo(
+                            chat_id=user['user_id'],
+                            photo=msg_data.photo[-1].file_id,
+                            caption=msg_data.caption
+                        )
+                    elif msg_data.video:
+                        await context.bot.send_video(
+                            chat_id=user['user_id'],
+                            video=msg_data.video.file_id,
+                            caption=msg_data.caption
+                        )
+                    elif msg_data.document:
+                        await context.bot.send_document(
+                            chat_id=user['user_id'],
+                            document=msg_data.document.file_id,
+                            caption=msg_data.caption
+                        )
+                    
+                    success_count += 1
+                    
+                    # Update progress every 10 users
+                    if (i + 1) % 10 == 0:
+                        await progress_msg.edit_text(
+                            f"📢 Broadcasting in progress...\n{i + 1}/{len(users)} users sent"
+                        )
+                        
+                except Exception as e:
+                    logger.error(f"Failed to send to user {user['user_id']}: {e}")
+                    fail_count += 1
+            
+            # Clean up
+            context.user_data['broadcast_active'] = False
+            context.user_data.pop('broadcast_content', None)
+            
+            try:
+                await progress_msg.edit_text(
+                    f"📢 *Broadcast Complete*\n\n"
+                    f"✅ Sent to: {success_count} users\n"
+                    f"❌ Failed: {fail_count} users\n\n"
+                    f"Success Rate: {(success_count/len(users)*100):.1f}%",
+                    parse_mode='Markdown',
+                    reply_markup=get_admin_panel_keyboard()
+                )
             except Exception as e:
-                logger.error(f"Failed to send to user {user['user_id']}: {e}")
-                fail_count += 1
+                logger.error(f"Failed to edit broadcast completion message: {e}")
+                # If editing fails, send a new message
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"📢 *Broadcast Complete*\n\n"
+                         f"✅ Sent to: {success_count} users\n"
+                         f"❌ Failed: {fail_count} users\n\n"
+                         f"Success Rate: {(success_count/len(users)*100):.1f}%",
+                    parse_mode='Markdown',
+                    reply_markup=get_admin_panel_keyboard()
+                )
+            
+            await db.log_action(update.effective_user.id, "broadcast", f"Broadcast to {success_count} users")
+            return ConversationHandler.END
         
-        # Clean up
-        context.user_data['broadcast_active'] = False
-        context.user_data.pop('broadcast_content', None)
-        
-        await progress_msg.delete()
-        
-        await query.edit_message_text(
-            f"📢 *Broadcast Complete*\n\n"
-            f"✅ Sent to: {success_count} users\n"
-            f"❌ Failed: {fail_count} users\n\n"
-            f"Success Rate: {(success_count/len(users)*100):.1f}%",
-            parse_mode='Markdown',
-            reply_markup=get_admin_panel_keyboard()
-        )
-        
-        await db.log_action(update.effective_user.id, "broadcast", f"Broadcast to {success_count} users")
-        return ConversationHandler.END
+        except Exception as e:
+            logger.error(f"Error during broadcast: {e}")
+            # Clean up on error
+            context.user_data['broadcast_active'] = False
+            context.user_data.pop('broadcast_content', None)
+            try:
+                await query.edit_message_text(
+                    "❌ An error occurred during broadcast. Please try again.",
+                    reply_markup=get_admin_panel_keyboard()
+                )
+            except Exception as edit_error:
+                logger.error(f"Failed to edit message after broadcast error: {edit_error}")
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text="❌ An error occurred during broadcast. Please try again.",
+                    reply_markup=get_admin_panel_keyboard()
+                )
+            return ConversationHandler.END
     
     elif query.data == "cancel_broadcast":
         context.user_data['broadcast_active'] = False
