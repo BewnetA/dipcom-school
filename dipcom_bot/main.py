@@ -261,7 +261,7 @@ class ResourceBot:
         self.application.add_handler(MessageHandler(filters.Regex('^📊 Statistics$'), view_statistics))
         self.application.add_handler(MessageHandler(filters.Regex('^🔙 Back to Admin Panel$'), admin_panel))
         self.application.add_handler(MessageHandler(filters.Regex('^🔙 Back to Main Menu$'), admin_panel))
-        self.application.add_handler(CallbackQueryHandler(handle_approval_callback, pattern='^(approve_user_|reject_user_|view_user_)'))
+        self.application.add_handler(CallbackQueryHandler(handle_approval_callback, pattern='^(approve_user_|view_user_)'))
         # Add broadcast confirmation callback handler
         self.application.add_handler(CallbackQueryHandler(broadcast_confirmation_callback, pattern='^(confirm_broadcast|cancel_broadcast)$'))
         self.application.add_handler(CallbackQueryHandler(handle_followup_response, pattern='^employment_followup_'))

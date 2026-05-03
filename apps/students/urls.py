@@ -9,7 +9,6 @@ from .views import (
 	StudentsSummaryView,
 	PendingStudentsView,
 	approve_student,
-	reject_student,
 )
 
 
@@ -22,7 +21,6 @@ urlpatterns = [
 	path("summary/", StudentsSummaryView.as_view(), name="students-summary"),
 	path("pending/", PendingStudentsView.as_view(), name="students-pending"),
 	path("<str:student_id>/approve/", approve_student, name="student-approve"),
-	path("<str:student_id>/reject/", reject_student, name="student-reject"),
 	path("<str:student_id>/", StudentDetailView.as_view(), name="student-detail"),
 	path("health/", students_health, name="students-health"),
 ]

@@ -136,7 +136,7 @@ def insert_student(name, father_name, phone, user_id, username, status: str = 'p
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ''',
                 (student_id, name, father_name, phone, user_id, username, meta, status,
-                 'not_paid', 12000, 0, 0, 'no', 'online', today, now, now)
+                        'not_paid', 12000, 0, 0, 'no', 'bot', today, now, now)
             )
         conn.commit()
         conn.close()
@@ -487,7 +487,12 @@ async def handle_followup_response(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    success = await db.record_employment_response(student['id'], survey_id, is_employed)
+    success = await db.record_employment_response(
+        student['id'],
+        survey_id,
+        is_employed,
+        phone_number=student.get('phone'),
+    )
     if success:
         response_text = "✅ Thank you! Your answer has been recorded."
         await query.edit_message_text(response_text)

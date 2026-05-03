@@ -10,7 +10,6 @@ from django.views import View
 from .services import (
 	create_student,
 	delete_student,
- 	cleanup_expired_rejections,
 	get_student_by_id,
 	get_students_summary,
 	list_students,
@@ -92,7 +91,6 @@ class StudentsSummaryView(View):
 
 class PendingStudentsView(View):
 	def get(self, request: HttpRequest):
-		cleanup_expired_rejections()
 		items = list_approval_students(search=request.GET.get("search"))
 		return JsonResponse({"items": items, "count": len(items)})
 
@@ -110,33 +108,12 @@ def approve_student(request: HttpRequest, student_id: str):
 	if not student:
 		return JsonResponse({"detail": "Student not found"}, status=404)
 
-	# only allow approving online pending registrations
+	# only allow approving pending online registrations from the web approvals page
 	if student.get("registrationType") != "online" or student.get("status") != "pending":
 		return JsonResponse({"detail": "Student cannot be approved"}, status=400)
 
 	updated = update_student(student_id, {"status": "approved"})
 	return JsonResponse(updated, status=200)
-
-
-@csrf_exempt
-def reject_student(request: HttpRequest, student_id: str):
-	if request.method != "POST":
-		return HttpResponseNotAllowed(["POST"])
-
-	_user, error = _require_staff_or_superuser(request)
-	if error:
-		return error
-
-	student = get_student_by_id(student_id)
-	if not student:
-		return JsonResponse({"detail": "Student not found"}, status=404)
-
-	if student.get("registrationType") != "online" or student.get("status") != "pending":
-		return JsonResponse({"detail": "Student cannot be rejected"}, status=400)
-
-	updated = update_student(student_id, {"status": "rejected"})
-	return JsonResponse(updated, status=200)
-
 
 @method_decorator(csrf_exempt, name="dispatch")
 class StudentDetailView(View):

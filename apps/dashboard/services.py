@@ -18,7 +18,8 @@ def get_dashboard_overview() -> dict:
 		"students_per_batch": analytics.get("studentsPerBatch", []),
 		"employment_breakdown": analytics.get("employmentBreakdown", []),
 		"recent_students": analytics.get("recentStudents", []),
-		"recent_registrations": analytics.get("recentRegistrations", []),
+		"recent_registrations": analytics.get("recentRegistrations", [])[:5],
 		"registration_breakdown": analytics.get("registrationBreakdown", []),
+		"follow_up_survey": analytics.get("followUpSurvey"),
 	}
 	return serialize_dashboard_payload(payload)

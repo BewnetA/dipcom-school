@@ -271,7 +271,15 @@ class Database:
             logger.error(f'Error getting graduated students: {e}')
             return []
 
-    async def record_employment_response(self, student_id: str, survey_id: str, is_employed: bool) -> bool:
+    async def delete_student_by_phone(self, phone_number: str) -> bool:
+        try:
+            deleted = await self._execute('DELETE FROM students_student WHERE phone = %s', (phone_number,))
+            return deleted > 0
+        except Exception as e:
+            logger.error(f'Error deleting student by phone: {e}')
+            return False
+
+    async def record_employment_response(self, student_id: str, survey_id: str, is_employed: bool, phone_number: str = None) -> bool:
         try:
             existing = await self._fetchone(
                 'SELECT id, is_employed FROM students_employmentcheckin WHERE student_id = %s AND survey_id = %s',
@@ -292,6 +300,17 @@ class Database:
                     await self._execute('UPDATE surveys_survey SET response_yes = response_yes + 1, response_no = response_no - 1 WHERE id = %s', (survey_id,))
                 else:
                     await self._execute('UPDATE surveys_survey SET response_no = response_no + 1, response_yes = response_yes - 1 WHERE id = %s', (survey_id,))
+
+                if phone_number:
+                    await self._execute(
+                        'UPDATE students_student SET employment_status = %s, updated_at = CURRENT_TIMESTAMP WHERE phone = %s',
+                        ('yes' if is_employed else 'no', phone_number),
+                    )
+                else:
+                    await self._execute(
+                        'UPDATE students_student SET employment_status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s',
+                        ('yes' if is_employed else 'no', student_id),
+                    )
                 return True
 
             await self._execute(
@@ -302,6 +321,17 @@ class Database:
                 await self._execute('UPDATE surveys_survey SET response_yes = response_yes + 1 WHERE id = %s', (survey_id,))
             else:
                 await self._execute('UPDATE surveys_survey SET response_no = response_no + 1 WHERE id = %s', (survey_id,))
+
+            if phone_number:
+                await self._execute(
+                    'UPDATE students_student SET employment_status = %s, updated_at = CURRENT_TIMESTAMP WHERE phone = %s',
+                    ('yes' if is_employed else 'no', phone_number),
+                )
+            else:
+                await self._execute(
+                    'UPDATE students_student SET employment_status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s',
+                    ('yes' if is_employed else 'no', student_id),
+                )
             return True
         except Exception as e:
             logger.error(f'Error recording employment response: {e}')

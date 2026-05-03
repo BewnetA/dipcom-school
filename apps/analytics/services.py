@@ -4,6 +4,7 @@ from datetime import datetime
 
 from apps.batches.services import list_batches
 from apps.students.services import list_students
+from apps.students.services import _followup_summary
 
 from .serializers import serialize_analytics_payload
 
@@ -52,12 +53,14 @@ def get_analytics_overview() -> dict:
 	students = list_students({"status": "approved"})
 	batches = list_batches()
 
-	# registration breakdown: online vs in-person, based only on approved students
-	registration_counts = {"online": 0, "in_person": 0}
+	# registration breakdown: online vs in-person vs bot, based only on approved students
+	registration_counts = {"online": 0, "in_person": 0, "bot": 0}
 	for student in students:
 		type_key = (student.get("registrationType") or "online").replace("-", "_")
 		if type_key == "in_person":
 			registration_counts["in_person"] += 1
+		elif type_key == "bot":
+			registration_counts["bot"] += 1
 		else:
 			registration_counts["online"] += 1
 
@@ -193,6 +196,7 @@ def get_analytics_overview() -> dict:
 		batch_performance.append({"name": batch["name"], "avgGrade": average})
 
 	best_performing_batch = max(batch_performance, key=lambda item: item["avgGrade"]) if batch_performance else {"name": "N/A", "avgGrade": 0}
+	follow_up_survey = _followup_summary()
 
 	payload = {
 		"totalStudents": total_students,
@@ -202,6 +206,7 @@ def get_analytics_overview() -> dict:
 		"registrationBreakdown": [
 			{"name": "Online", "value": registration_counts.get("online", 0)},
 			{"name": "In Person", "value": registration_counts.get("in_person", 0)},
+			{"name": "Bot", "value": registration_counts.get("bot", 0)},
 		],
 		"genderBreakdown": gender_breakdown,
 		"courseBreakdown": course_breakdown,
@@ -222,6 +227,7 @@ def get_analytics_overview() -> dict:
 		"gradeDistribution": grade_distribution,
 		"registrationsOverTime": registrations_over_time,
 		"bestPerformingBatch": best_performing_batch,
+		"followUpSurvey": follow_up_survey,
 	}
 
 	return serialize_analytics_payload(payload)

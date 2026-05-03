@@ -3,7 +3,7 @@ from django.utils import timezone
 
 
 class Student(models.Model):
-	REGISTRATION_TYPE_CHOICES = (("online", "Online"), ("in_person", "In-Person"))
+	REGISTRATION_TYPE_CHOICES = (("online", "Online"), ("in_person", "In-Person"), ("bot", "Bot"))
 
 	id = models.CharField(primary_key=True, max_length=32)
 	name = models.CharField(max_length=120)

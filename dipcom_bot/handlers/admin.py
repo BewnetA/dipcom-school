@@ -163,7 +163,7 @@ async def set_followup_question_receive(update: Update, context: ContextTypes.DE
 @admin_required
 @error_handler
 async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle user approval/rejection from inline buttons"""
+    """Handle user approval from inline buttons"""
     query = update.callback_query
     await query.answer()
     
@@ -212,44 +212,6 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
                 parse_mode='Markdown'
             )
     
-    elif query.data.startswith("reject_user_"):
-        user_id = int(query.data.split("_")[2])
-        user = await db.get_user(user_id)
-        
-        if user:
-            # Update status to rejected
-            await db.update_user_status(user_id, 'rejected')
-            if user.get('phone_number'):
-                from handlers.user import update_backend_student_status_by_phone
-                update_backend_student_status_by_phone(user['phone_number'], 'rejected')
-            
-            # Delete the old message
-            await query.message.delete()
-            
-            # Send confirmation to admin
-            await query.message.reply_text(
-                f"❌ *USER REJECTED*\n\n"
-                f"👤 User: *{user['full_name']}*\n"
-                f"🆔 ID: `{user_id}`\n\n"
-                f"The user has been rejected and will not have access.",
-                parse_mode='Markdown',
-                reply_markup=get_admin_panel_keyboard()
-            )
-            
-            # Notify the user
-            try:
-                await context.bot.send_message(
-                    user_id,
-                    "❌ *Application Rejected*\n\n"
-                    "We regret to inform you that your registration has been rejected.\n\n"
-                    "Please contact support for more information.",
-                    parse_mode='Markdown'
-                )
-            except Exception as e:
-                logger.error(f"Failed to notify user {user_id}: {e}")
-            
-            await db.log_action(update.effective_user.id, "reject_user", f"Rejected user {user_id}")
-    
     elif query.data.startswith("view_user_"):
         user_id = int(query.data.split("_")[2])
         user = await db.get_user(user_id)
@@ -258,11 +220,10 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
             from utils.helpers import format_user_info
             user_info = format_user_info(user)
             
-            # Add approve/reject buttons again
+            # Add approve button again
             keyboard = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("✅ Approve User", callback_data=f"approve_user_{user_id}"),
-                    InlineKeyboardButton("❌ Reject User", callback_data=f"reject_user_{user_id}")
+                    InlineKeyboardButton("✅ Approve User", callback_data=f"approve_user_{user_id}")
                 ]
             ])
             

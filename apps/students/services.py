@@ -8,7 +8,8 @@ from django.utils import timezone
 
 from apps.batches.models import Batch
 from apps.batches.lifecycle import sync_completed_batch_students
-from .models import Student
+from apps.surveys.models import Survey
+from .models import EmploymentCheckin, Student
 from .serializers import serialize_student, serialize_students, serialize_students_summary
 
 
@@ -32,11 +33,119 @@ def _phone_exists(phone: str, exclude_student_id: str | None = None) -> bool:
 	return False
 
 
+def _meta_dict(student: Student) -> dict:
+	return student.meta if hasattr(student, "meta") and isinstance(student.meta, dict) else {}
+
+
+def _value_exists(value: object) -> bool:
+	return value not in (None, "", [])
+
+
+def _registration_completion_missing_fields(student: Student) -> list[str]:
+	meta = _meta_dict(student)
+	missing: list[str] = []
+
+	if not _value_exists(meta.get("sex")):
+		missing.append("Sex")
+	if not _value_exists(meta.get("dob")):
+		missing.append("Date of Birth")
+	if not _value_exists(meta.get("nationality")):
+		missing.append("Nationality")
+	if not _value_exists(meta.get("city")):
+		missing.append("City")
+	if not _value_exists(meta.get("subCity")):
+		missing.append("Sub-City")
+	if not _value_exists(meta.get("kebele")):
+		missing.append("Kebele")
+	if not _value_exists(meta.get("houseNo")):
+		missing.append("House No.")
+	if not _value_exists(meta.get("maritalStatus")):
+		missing.append("Marital Status")
+
+	emergency = meta.get("emergency") if isinstance(meta.get("emergency"), dict) else {}
+	if not _value_exists(emergency.get("name")):
+		missing.append("Emergency Contact Name")
+	if not _value_exists(emergency.get("relationship")):
+		missing.append("Emergency Relationship")
+	if not _value_exists(emergency.get("subCity")):
+		missing.append("Emergency Sub-City")
+	if not _value_exists(emergency.get("kebele")):
+		missing.append("Emergency Kebele")
+	if not _value_exists(emergency.get("houseNo")):
+		missing.append("Emergency House No.")
+	if not _value_exists(emergency.get("mobile")):
+		missing.append("Emergency Mobile")
+
+	education = meta.get("education") if isinstance(meta.get("education"), dict) else {}
+	if not _value_exists(education.get("level")):
+		missing.append("Education Level")
+
+	classification = meta.get("classification") if isinstance(meta.get("classification"), dict) else {}
+	if not _value_exists(classification.get("session")):
+		missing.append("Session")
+	if not _value_exists(classification.get("payment")):
+		missing.append("Payment Plan")
+
+	courses = meta.get("courses") if isinstance(meta.get("courses"), dict) else {}
+	has_course = any(bool(value) for value in courses.values())
+	if not has_course:
+		missing.append("Course Selection")
+
+	return missing
+
+
+def _is_completion_needed(student: Student) -> bool:
+	if getattr(student, "registration_type", None) != "bot":
+		return False
+	if getattr(student, "status", None) != "approved":
+		return False
+	return bool(_registration_completion_missing_fields(student))
+
+
+def _latest_followup_checkin(student: Student) -> EmploymentCheckin | None:
+	return (
+		EmploymentCheckin.objects.select_related("survey")
+		.filter(student_id=student.id)
+		.order_by("-checked_at", "-id")
+		.first()
+	)
+
+
+def _followup_summary() -> dict:
+	survey = Survey.objects.filter(id="job_followup").first()
+	if not survey:
+		return {
+			"id": "job_followup",
+			"question": "Have you found a job after graduation? Please answer Yes or No.",
+			"lastSent": None,
+			"responses": {"yes": 0, "no": 0},
+		}
+
+	return {
+		"id": survey.id,
+		"question": survey.question,
+		"lastSent": survey.last_sent.isoformat() if survey.last_sent else None,
+		"responses": {"yes": int(survey.response_yes), "no": int(survey.response_no)},
+	}
+
+
 def _student_to_dict(student: Student) -> dict:
-	meta = student.meta if hasattr(student, "meta") and isinstance(student.meta, dict) else {}
+	meta = _meta_dict(student)
 	sex = meta.get("sex") if meta else None
 	if not sex and hasattr(student, "sex"):
 		sex = getattr(student, "sex", None)
+	completion_missing_fields = _registration_completion_missing_fields(student)
+	needs_completion = _is_completion_needed(student)
+	followup_checkin = _latest_followup_checkin(student)
+	followup_response = None
+	followup_checked_at = None
+	followup_survey_id = None
+	followup_question = None
+	if followup_checkin:
+		followup_response = "yes" if followup_checkin.is_employed else "no"
+		followup_checked_at = followup_checkin.checked_at.isoformat() if followup_checkin.checked_at else None
+		followup_survey_id = followup_checkin.survey_id
+		followup_question = followup_checkin.survey.question if getattr(followup_checkin, "survey", None) else None
 	return {
 		"id": student.id,
 		"name": student.name,
@@ -60,6 +169,12 @@ def _student_to_dict(student: Student) -> dict:
 		"registrationDate": student.registration_date.isoformat() if student.registration_date else None,
 		"createdAt": student.created_at.isoformat() if getattr(student, "created_at", None) else None,
 		"meta": student.meta if hasattr(student, "meta") and student.meta else {},
+		"needsCompletion": needs_completion,
+		"completionMissingFields": completion_missing_fields if needs_completion else [],
+		"followUpResponse": followup_response,
+		"followUpCheckedAt": followup_checked_at,
+		"followUpSurveyId": followup_survey_id,
+		"followUpQuestion": followup_question,
 	}
 
 
@@ -118,31 +233,14 @@ def list_students(filters: dict | None = None) -> list[dict]:
 	return serialize_students(items)
 
 
-def cleanup_expired_rejections() -> int:
-	cutoff = timezone.now() - timedelta(hours=24)
-	expired_ids = list(
-		Student.objects.filter(status="rejected", rejected_at__isnull=False, rejected_at__lt=cutoff)
-		.only("id")
-		.values_list("id", flat=True),
-	)
-	deleted = 0
-	for student_id in expired_ids:
-		if delete_student(student_id):
-			deleted += 1
-	return deleted
-
-
 def list_approval_students(search: str | None = None) -> list[dict]:
-	cleanup_expired_rejections()
-	queryset = Student.objects.select_related("batch").filter(registration_type="online").filter(
-		Q(status="pending") | Q(status="rejected", rejected_at__gte=timezone.now() - timedelta(hours=24))
-	)
+	queryset = Student.objects.select_related("batch").filter(registration_type="online", status="pending")
 	term = (search or "").strip()
 	if term:
 		queryset = queryset.filter(Q(name__icontains=term) | Q(phone__icontains=term))
 	items = sorted(
 		[_student_to_dict(student) for student in queryset],
-		key=lambda item: (0 if item.get("status") == "pending" else 1, item.get("registrationDate") or ""),
+		key=lambda item: item.get("registrationDate") or "",
 	)
 	return serialize_students(items)
 
@@ -275,7 +373,7 @@ def create_student(payload: dict) -> dict:
 		"grade": grade,
 		"employment_status": payload.get("employmentStatus", "no"),
 		"registration_type": payload.get("registrationType", "online"),
-		# set status based on registration type: online -> pending, in_person -> approved
+		# set status based on registration type: in_person -> approved, online/bot -> pending
 		"status": "approved" if payload.get("registrationType", "online") == "in_person" else "pending",
 		"meta": payload or {},
 	}
@@ -327,7 +425,13 @@ def update_student(student_id: str, payload: dict) -> dict | None:
 	if "registrationDate" in payload and payload["registrationDate"]:
 		student.registration_date = payload["registrationDate"]
 	if "meta" in payload:
-		student.meta = payload.get("meta") or {}
+		existing_meta = _meta_dict(student)
+		incoming_meta = payload.get("meta") or {}
+		if isinstance(incoming_meta, dict):
+			merged_meta = {**existing_meta, **incoming_meta}
+		else:
+			merged_meta = existing_meta
+		student.meta = merged_meta
 
 	student.save()
 	return serialize_student(_student_to_dict(student))

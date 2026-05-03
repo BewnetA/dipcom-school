@@ -17,7 +17,10 @@ from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-load_dotenv(BASE_DIR / 'dipcom_bot' / '.env')
+# Load the project-root env first so the backend uses the same database settings
+# as the checked-in `.env.example` file.
+load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / 'dipcom_bot' / '.env', override=False)
 
 
 # Quick-start development settings - unsuitable for production
@@ -87,11 +90,11 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.getenv('DB_NAME', 'resource_bot'),
-        'USER': os.getenv('DB_USER', 'bot_admin'),
-        'PASSWORD': os.getenv('DB_PASSWORD', 'SecurePass123'),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '3306'),
+        'NAME': os.getenv('MYSQL_DATABASE', os.getenv('DB_NAME', 'dipcom_db')),
+        'USER': os.getenv('MYSQL_USER', os.getenv('DB_USER', 'dipcom_user')),
+        'PASSWORD': os.getenv('MYSQL_PASSWORD', os.getenv('DB_PASSWORD', 'dipcom-password')),
+        'HOST': os.getenv('MYSQL_HOST', os.getenv('DB_HOST', 'localhost')),
+        'PORT': os.getenv('MYSQL_PORT', os.getenv('DB_PORT', '3306')),
         'OPTIONS': {
             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
             'charset': 'utf8mb4',

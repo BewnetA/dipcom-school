@@ -19,4 +19,5 @@ def serialize_dashboard_payload(payload: dict) -> dict:
 		"recentStudents": deepcopy(payload.get("recent_students", [])),
 		"recentRegistrations": deepcopy(payload.get("recent_registrations", [])),
 		"registrationBreakdown": deepcopy(payload.get("registration_breakdown", [])),
+		"followUpSurvey": deepcopy(payload.get("follow_up_survey")),
 	}

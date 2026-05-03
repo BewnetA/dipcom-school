@@ -22,6 +22,7 @@ urlpatterns = [
     path('', RedirectView.as_view(url='http://localhost:5173/', permanent=False)),
     path('admin/', admin.site.urls),
     path('api/common/', include('apps.common.urls')),
+    path('api/settings/', include('apps.common.settings_urls')),
     path('api/auth/', include('apps.auth.urls')),
     path('api/admins/', include('apps.auth.admin_urls')),
     path('api/landing/', include('apps.landing.urls')),

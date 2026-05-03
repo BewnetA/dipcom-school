@@ -56,3 +56,15 @@ class BotLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.timestamp} - {self.action}"
+
+
+class SystemSetting(models.Model):
+    key = models.CharField(max_length=120, unique=True)
+    value_json = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "system_settings"
+
+    def __str__(self) -> str:
+        return self.key
