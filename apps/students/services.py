@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.batches.models import Batch
 from apps.batches.lifecycle import sync_completed_batch_students
+from apps.common.services import get_course_fees
 from apps.surveys.models import Survey
 from .models import EmploymentCheckin, Student
 from .serializers import serialize_student, serialize_students, serialize_students_summary
@@ -353,7 +354,17 @@ def create_student(payload: dict) -> dict:
 			_default_payment = "not_paid"
 
 	# compute tuition so we can default amount_paid appropriately
-	_tuition = int(payload.get("tuitionFee", 12000))
+	if "tuitionFee" in payload and payload.get("tuitionFee") is not None:
+		_tuition = int(payload["tuitionFee"])
+	else:
+		course_fees = get_course_fees()
+		courses = payload.get("courses") or {}
+		if isinstance(courses, dict) and courses.get("computer") and courses.get("office"):
+			_tuition = int(course_fees["computer"]) + int(course_fees["office"])
+		elif isinstance(courses, dict) and courses.get("office"):
+			_tuition = int(course_fees["office"])
+		else:
+			_tuition = int(course_fees["computer"])
 
 	create_kwargs = {
 		"id": student_id,

@@ -47,6 +47,32 @@ def get_backend_db():
         autocommit=True
     )
 
+def get_course_fees():
+    """Get the current course fees from the backend settings table"""
+    defaults = {'computer': 12000, 'office': 12000}
+    try:
+        conn = get_backend_db()
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT value_json FROM system_settings WHERE `key` = %s LIMIT 1', ('course_fees',))
+            result = cursor.fetchone()
+        conn.close()
+        if not result:
+            return defaults
+
+        value_json = result.get('value_json')
+        if isinstance(value_json, str):
+            value_json = json.loads(value_json)
+        if not isinstance(value_json, dict):
+            return defaults
+
+        return {
+            'computer': int(value_json.get('computer', defaults['computer'])),
+            'office': int(value_json.get('office', defaults['office'])),
+        }
+    except Exception as e:
+        logger.error(f'Error querying course fees: {e}')
+        return defaults
+
 def get_student_by_phone(phone):
     """Get student from backend by phone"""
     try:
@@ -123,6 +149,7 @@ def insert_student(name, father_name, phone, user_id, username, status: str = 'p
         from datetime import datetime as dt
         student_id = f"s-{uuid.uuid4().hex[:8]}"
         conn = get_backend_db()
+        course_fees = get_course_fees()
         with conn.cursor() as cursor:
             meta = json.dumps({'telegram_user_id': user_id, 'telegram_username': username})
             now = dt.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -136,7 +163,7 @@ def insert_student(name, father_name, phone, user_id, username, status: str = 'p
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ''',
                 (student_id, name, father_name, phone, user_id, username, meta, status,
-                        'not_paid', 12000, 0, 0, 'no', 'bot', today, now, now)
+                    'not_paid', course_fees['computer'], 0, 0, 'no', 'bot', today, now, now)
             )
         conn.commit()
         conn.close()
