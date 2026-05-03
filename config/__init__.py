@@ -1,1 +1,3 @@
-# SQLite doesn't need MySQLdb compatibility
+import pymysql
+
+pymysql.install_as_MySQLdb()

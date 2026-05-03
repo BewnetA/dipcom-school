@@ -1,1 +1,1 @@
-# SQLite doesn't need MySQLdb compatibility
+# MySQL compatibility setup

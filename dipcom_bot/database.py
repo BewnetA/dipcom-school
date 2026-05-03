@@ -1,10 +1,9 @@
-import sqlite3
-import aiosqlite
-from datetime import date
-from typing import List, Dict, Optional, Any
-from contextlib import asynccontextmanager
-import logging
 import os
+import logging
+from datetime import date
+from typing import List, Dict, Optional
+from contextlib import asynccontextmanager
+import aiomysql
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,291 +11,214 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def row_to_dict(row):
-    """Convert a sqlite3.Row to a dictionary"""
-    if row is None:
-        return None
-    return {key: row[key] for key in row.keys()}
-
 class Database:
-    def __init__(self, db_name: str = None):
-        if db_name is None:
-            # Use the same DB as Django backend (now in same directory)
-            db_name = os.path.join(os.path.dirname(__file__), '..', 'db.sqlite3')
-        self.db_name = db_name
-        self.connection = None
-    
+    def __init__(self):
+        self.pool = None
+        self.db_config = {
+            'host': os.getenv('DB_HOST', 'localhost'),
+            'port': int(os.getenv('DB_PORT', 3306)),
+            'user': os.getenv('DB_USER', 'bot_admin'),
+            'password': os.getenv('DB_PASSWORD', 'SecurePass123'),
+            'db': os.getenv('DB_NAME', 'resource_bot'),
+            'charset': 'utf8mb4',
+            'cursorclass': aiomysql.DictCursor,
+            'autocommit': False,
+        }
+
     async def init_db(self):
-        """Initialize database connection and tables"""
         try:
-            self.connection = await aiosqlite.connect(self.db_name)
-            # Enable foreign keys
-            await self.connection.execute("PRAGMA foreign_keys = ON")
-            # Set row factory to return dict-like rows
-            self.connection.row_factory = aiosqlite.Row
-            await self.init_database()
-            logger.info("Database initialized successfully")
+            self.pool = await aiomysql.create_pool(
+                host=self.db_config['host'],
+                port=self.db_config['port'],
+                user=self.db_config['user'],
+                password=self.db_config['password'],
+                db=self.db_config['db'],
+                charset=self.db_config['charset'],
+                cursorclass=self.db_config['cursorclass'],
+                autocommit=self.db_config['autocommit'],
+                maxsize=10,
+            )
+            logger.info('MySQL database pool initialized successfully')
             return True
         except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
+            logger.error(f'Failed to initialize MySQL database: {e}')
             raise
-    
+
     async def close_db(self):
-        """Close database connection"""
-        if self.connection:
-            await self.connection.close()
-            logger.info("Database connection closed")
-    
+        if self.pool:
+            self.pool.close()
+            await self.pool.wait_closed()
+            logger.info('MySQL database pool closed')
+
     @asynccontextmanager
     async def get_connection(self):
-        """Context manager for database connections"""
-        try:
-            yield self.connection
-            await self.connection.commit()
-        except Exception as e:
-            await self.connection.rollback()
-            logger.error(f"Database error: {e}")
-            raise
-    
-    async def init_database(self):
-        """Initialize database tables (if not already created by Django)"""
+        async with self.pool.acquire() as conn:
+            try:
+                yield conn
+                await conn.commit()
+            except Exception as e:
+                await conn.rollback()
+                logger.error(f'Database error: {e}')
+                raise
+
+    async def _fetchone(self, query: str, params: tuple = None) -> Optional[Dict]:
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(query, params or ())
+                return await cursor.fetchone()
+
+    async def _fetchall(self, query: str, params: tuple = None) -> List[Dict]:
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(query, params or ())
+                return await cursor.fetchall()
+
+    async def _execute(self, query: str, params: tuple = None) -> int:
         async with self.get_connection() as conn:
-            # Note: Django will create these tables, but we ensure they exist
-            # Users table (common_botuser)
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS common_botuser (
-                    user_id INTEGER PRIMARY KEY,
-                    full_name TEXT NOT NULL,
-                    father_name TEXT NOT NULL,
-                    phone_number TEXT,
-                    username TEXT,
-                    status TEXT DEFAULT 'pending',
-                    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    enrolled_at TIMESTAMP
-                )
-            ''')
-            
-            # Modules table (common_botmodule)
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS common_botmodule (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    module_name TEXT UNIQUE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_by INTEGER
-                )
-            ''')
-            
-            # Resources table (common_botresource)
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS common_botresource (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    module_id INTEGER,
-                    file_id TEXT NOT NULL,
-                    file_name TEXT,
-                    file_type TEXT,
-                    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    uploaded_by INTEGER,
-                    FOREIGN KEY (module_id) REFERENCES common_botmodule (id) ON DELETE CASCADE
-                )
-            ''')
-            
-            # Logs table (common_botlog)
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS common_botlog (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    action TEXT,
-                    details TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create indexes
-            await conn.execute('CREATE INDEX IF NOT EXISTS idx_common_botuser_status ON common_botuser(status)')
-            await conn.execute('CREATE INDEX IF NOT EXISTS idx_common_botresource_module ON common_botresource(module_id)')
-            await conn.execute('CREATE INDEX IF NOT EXISTS idx_common_botlog_user ON common_botlog(user_id)')
-            await conn.execute('CREATE INDEX IF NOT EXISTS idx_common_botlog_timestamp ON common_botlog(timestamp)')
-            
-            logger.info("Database tables initialized successfully")
-    
+            async with conn.cursor() as cursor:
+                await cursor.execute(query, params or ())
+                return cursor.rowcount
+
     # User methods
-    async def register_user(self, user_id: int, full_name: str, father_name: str, 
+    async def register_user(self, user_id: int, full_name: str, father_name: str,
                            phone_number: str = None, username: str = None, status: str = 'pending') -> bool:
-        """Register a new user"""
         try:
-            async with self.get_connection() as conn:
-                await conn.execute('''
-                    INSERT OR REPLACE INTO common_botuser (user_id, full_name, father_name, phone_number, username, status)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (user_id, full_name, father_name, phone_number, username, status))
-                return True
+            await self._execute(
+                '''
+                    INSERT INTO users (user_id, full_name, father_name, phone_number, username, status)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE full_name = VALUES(full_name), father_name = VALUES(father_name),
+                        phone_number = VALUES(phone_number), username = VALUES(username), status = VALUES(status)
+                ''',
+                (user_id, full_name, father_name, phone_number, username, status)
+            )
+            return True
         except Exception as e:
-            logger.error(f"Error registering user: {e}")
+            logger.error(f'Error registering user: {e}')
             return False
-    
+
     async def get_user(self, user_id: int) -> Optional[Dict]:
-        """Get user by ID"""
         try:
-            async with self.get_connection() as conn:
-                cursor = await conn.execute('SELECT * FROM common_botuser WHERE user_id = ?', (user_id,))
-                row = await cursor.fetchone()
-                if row:
-                    # Convert row to dictionary properly
-                    return dict(row)
-                return None
+            return await self._fetchone('SELECT * FROM users WHERE user_id = %s', (user_id,))
         except Exception as e:
-            logger.error(f"Error getting user: {e}")
+            logger.error(f'Error getting user: {e}')
             return None
-    
+
     async def update_user_status(self, user_id: int, status: str) -> bool:
-        """Update user enrollment status"""
         try:
-            async with self.get_connection() as conn:
-                await conn.execute('''
-                    UPDATE common_botuser 
-                    SET status = ?, enrolled_at = CASE WHEN ? = 'enrolled' THEN CURRENT_TIMESTAMP ELSE enrolled_at END
-                    WHERE user_id = ?
-                ''', (status, status, user_id))
-                return True
+            await self._execute(
+                '''
+                    UPDATE users
+                    SET status = %s,
+                        enrolled_at = CASE WHEN %s = 'enrolled' THEN CURRENT_TIMESTAMP ELSE enrolled_at END
+                    WHERE user_id = %s
+                ''',
+                (status, status, user_id)
+            )
+            return True
         except Exception as e:
-            logger.error(f"Error updating user status: {e}")
+            logger.error(f'Error updating user status: {e}')
             return False
-    
+
     async def get_all_users(self, status: str = None) -> List[Dict]:
-        """Get all users, optionally filtered by status"""
         try:
-            async with self.get_connection() as conn:
-                if status:
-                    cursor = await conn.execute('SELECT * FROM common_botuser WHERE status = ? ORDER BY registered_at DESC', (status,))
-                else:
-                    cursor = await conn.execute('SELECT * FROM common_botuser ORDER BY registered_at DESC')
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
+            if status:
+                return await self._fetchall('SELECT * FROM users WHERE status = %s ORDER BY registered_at DESC', (status,))
+            return await self._fetchall('SELECT * FROM users ORDER BY registered_at DESC')
         except Exception as e:
-            logger.error(f"Error getting users: {e}")
+            logger.error(f'Error getting users: {e}')
             return []
-    
+
     # Module methods
     async def add_module(self, module_name: str, created_by: int) -> bool:
-        """Add a new module"""
         try:
-            async with self.get_connection() as conn:
-                await conn.execute('INSERT INTO common_botmodule (module_name, created_by) VALUES (?, ?)', 
-                                 (module_name, created_by))
-                return True
-        except sqlite3.IntegrityError:
-            logger.warning(f"Module '{module_name}' already exists")
-            return False
+            await self._execute(
+                'INSERT INTO modules (module_name, created_at, created_by) VALUES (%s, CURRENT_TIMESTAMP, %s)',
+                (module_name, created_by)
+            )
+            return True
         except Exception as e:
-            logger.error(f"Error adding module: {e}")
+            if 'Duplicate entry' in str(e):
+                logger.warning(f"Module '{module_name}' already exists")
+                return False
+            logger.error(f'Error adding module: {e}')
             return False
-    
+
     async def get_modules(self) -> List[Dict]:
-        """Get all modules"""
         try:
-            async with self.get_connection() as conn:
-                cursor = await conn.execute('SELECT * FROM common_botmodule ORDER BY module_name')
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
+            return await self._fetchall('SELECT * FROM modules ORDER BY module_name')
         except Exception as e:
-            logger.error(f"Error getting modules: {e}")
+            logger.error(f'Error getting modules: {e}')
             return []
-    
+
     async def get_module(self, module_id: int) -> Optional[Dict]:
-        """Get module by ID"""
         try:
-            async with self.get_connection() as conn:
-                cursor = await conn.execute('SELECT * FROM common_botmodule WHERE id = ?', (module_id,))
-                row = await cursor.fetchone()
-                return dict(row) if row else None
+            return await self._fetchone('SELECT * FROM modules WHERE id = %s', (module_id,))
         except Exception as e:
-            logger.error(f"Error getting module: {e}")
+            logger.error(f'Error getting module: {e}')
             return None
-    
+
     async def get_module_by_name(self, module_name: str) -> Optional[Dict]:
-        """Get module by name"""
         try:
-            async with self.get_connection() as conn:
-                cursor = await conn.execute('SELECT * FROM common_botmodule WHERE module_name = ?', (module_name,))
-                row = await cursor.fetchone()
-                return dict(row) if row else None
+            return await self._fetchone('SELECT * FROM modules WHERE module_name = %s', (module_name,))
         except Exception as e:
-            logger.error(f"Error getting module by name: {e}")
+            logger.error(f'Error getting module by name: {e}')
             return None
-    
+
     async def delete_module(self, module_id: int) -> bool:
-        """Delete a module and its resources"""
         try:
-            async with self.get_connection() as conn:
-                await conn.execute('DELETE FROM common_botmodule WHERE id = ?', (module_id,))
-                return True
+            await self._execute('DELETE FROM modules WHERE id = %s', (module_id,))
+            return True
         except Exception as e:
-            logger.error(f"Error deleting module: {e}")
+            logger.error(f'Error deleting module: {e}')
             return False
-    
+
     # Resource methods
-    async def add_resource(self, module_id: int, file_id: str, file_name: str, 
+    async def add_resource(self, module_id: int, file_id: str, file_name: str,
                           file_type: str, uploaded_by: int) -> bool:
-        """Add a resource to a module"""
         try:
-            async with self.get_connection() as conn:
-                await conn.execute('''
-                    INSERT INTO common_botresource (module_id, file_id, file_name, file_type, uploaded_by)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (module_id, file_id, file_name, file_type, uploaded_by))
-                return True
+            await self._execute(
+                '''
+                    INSERT INTO resources (module_id, file_id, file_name, file_type, uploaded_by, uploaded_at)
+                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ''',
+                (module_id, file_id, file_name, file_type, uploaded_by)
+            )
+            return True
         except Exception as e:
-            logger.error(f"Error adding resource: {e}")
+            logger.error(f'Error adding resource: {e}')
             return False
-    
+
     async def get_module_resources(self, module_id: int) -> List[Dict]:
-        """Get all resources for a module"""
         try:
-            async with self.get_connection() as conn:
-                cursor = await conn.execute('SELECT * FROM common_botresource WHERE module_id = ? ORDER BY uploaded_at DESC', (module_id,))
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
+            return await self._fetchall('SELECT * FROM resources WHERE module_id = %s ORDER BY uploaded_at DESC', (module_id,))
         except Exception as e:
-            logger.error(f"Error getting module resources: {e}")
+            logger.error(f'Error getting module resources: {e}')
             return []
-    
+
     async def get_resource(self, resource_id: int) -> Optional[Dict]:
-        """Get a single resource by ID"""
         try:
-            async with self.get_connection() as conn:
-                cursor = await conn.execute('SELECT * FROM common_botresource WHERE id = ?', (resource_id,))
-                row = await cursor.fetchone()
-                return dict(row) if row else None
+            return await self._fetchone('SELECT * FROM resources WHERE id = %s', (resource_id,))
         except Exception as e:
-            logger.error(f"Error getting resource: {e}")
+            logger.error(f'Error getting resource: {e}')
             return None
-    
+
     async def delete_resource(self, resource_id: int) -> bool:
-        """Delete a resource"""
         try:
-            async with self.get_connection() as conn:
-                await conn.execute('DELETE FROM common_botresource WHERE id = ?', (resource_id,))
-                return True
+            await self._execute('DELETE FROM resources WHERE id = %s', (resource_id,))
+            return True
         except Exception as e:
-            logger.error(f"Error deleting resource: {e}")
+            logger.error(f'Error deleting resource: {e}')
             return False
 
     async def get_followup_survey(self, survey_id: str = 'job_followup') -> Optional[Dict]:
-        """Return the stored follow-up survey record"""
         try:
-            async with self.get_connection() as conn:
-                cursor = await conn.execute(
-                    'SELECT * FROM surveys_survey WHERE id = ?',
-                    (survey_id,)
-                )
-                row = await cursor.fetchone()
-                return dict(row) if row else None
+            return await self._fetchone('SELECT * FROM surveys_survey WHERE id = %s', (survey_id,))
         except Exception as e:
-            logger.error(f"Error getting follow-up survey: {e}")
+            logger.error(f'Error getting follow-up survey: {e}')
             return None
 
     async def ensure_followup_survey(self, question: str = None, survey_id: str = 'job_followup') -> dict:
-        """Create or update the follow-up survey record"""
         current = await self.get_followup_survey(survey_id)
         if current:
             if question is not None and current.get('question') != question:
@@ -305,131 +227,92 @@ class Database:
             return current
 
         if question is None:
-            question = "Have you found a job after graduation? Please answer Yes or No."
+            question = 'Have you found a job after graduation? Please answer Yes or No.'
 
-        async with self.get_connection() as conn:
-            await conn.execute(
-                '''INSERT INTO surveys_survey (id, question, survey_type, last_sent, response_yes, response_no)
-                   VALUES (?, ?, ?, ?, 0, 0)''',
-                (survey_id, question, 'yes_no', date.today().isoformat())
-            )
-            return {
-                'id': survey_id,
-                'question': question,
-                'type': 'yes_no',
-                'lastSent': date.today().isoformat(),
-                'responses': {'yes': 0, 'no': 0}
-            }
+        await self._execute(
+            '''
+                INSERT INTO surveys_survey (id, question, survey_type, last_sent, response_yes, response_no)
+                VALUES (%s, %s, %s, CURRENT_DATE, 0, 0)
+            ''',
+            (survey_id, question, 'yes_no')
+        )
+
+        return {
+            'id': survey_id,
+            'question': question,
+            'survey_type': 'yes_no',
+            'last_sent': date.today().isoformat(),
+            'response_yes': 0,
+            'response_no': 0,
+        }
 
     async def update_followup_survey_question(self, question: str, survey_id: str = 'job_followup') -> Optional[Dict]:
-        """Update the follow-up survey question text"""
         try:
-            async with self.get_connection() as conn:
-                await conn.execute(
-                    'UPDATE surveys_survey SET question = ? WHERE id = ?',
-                    (question, survey_id)
-                )
+            await self._execute('UPDATE surveys_survey SET question = %s WHERE id = %s', (question, survey_id))
             return await self.get_followup_survey(survey_id)
         except Exception as e:
-            logger.error(f"Error updating follow-up survey question: {e}")
+            logger.error(f'Error updating follow-up survey question: {e}')
             return None
 
     async def update_followup_survey_last_sent(self, survey_id: str = 'job_followup') -> bool:
-        """Update the last_sent date for the follow-up survey"""
         try:
-            async with self.get_connection() as conn:
-                await conn.execute(
-                    'UPDATE surveys_survey SET last_sent = ? WHERE id = ?',
-                    (date.today().isoformat(), survey_id)
-                )
+            await self._execute('UPDATE surveys_survey SET last_sent = CURRENT_DATE WHERE id = %s', (survey_id,))
             return True
         except Exception as e:
-            logger.error(f"Error updating follow-up survey last_sent: {e}")
+            logger.error(f'Error updating follow-up survey last_sent: {e}')
             return False
 
     async def get_graduated_students(self) -> List[Dict]:
-        """Get all graduated students who have a Telegram user id"""
         try:
-            async with self.get_connection() as conn:
-                cursor = await conn.execute(
-                    'SELECT id, telegram_user_id, name FROM students_student '
-                    'WHERE graduated = 1 AND telegram_user_id IS NOT NULL'
-                )
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
+            return await self._fetchall(
+                'SELECT id, telegram_user_id, name FROM students_student WHERE graduated = 1 AND telegram_user_id IS NOT NULL'
+            )
         except Exception as e:
-            logger.error(f"Error getting graduated students: {e}")
+            logger.error(f'Error getting graduated students: {e}')
             return []
 
     async def record_employment_response(self, student_id: str, survey_id: str, is_employed: bool) -> bool:
-        """Insert or update the student's employment response for a follow-up survey"""
         try:
-            async with self.get_connection() as conn:
-                cursor = await conn.execute(
-                    'SELECT id, is_employed FROM students_employmentcheckin '
-                    'WHERE student_id = ? AND survey_id = ?',
-                    (student_id, survey_id)
-                )
-                existing = await cursor.fetchone()
+            existing = await self._fetchone(
+                'SELECT id, is_employed FROM students_employmentcheckin WHERE student_id = %s AND survey_id = %s',
+                (student_id, survey_id)
+            )
 
-                if existing:
-                    previous_answer = bool(existing['is_employed'])
-                    if previous_answer == is_employed:
-                        return True
-
-                    # Update the existing response and adjust counts
-                    await conn.execute(
-                        'UPDATE students_employmentcheckin '
-                        'SET is_employed = ?, checked_at = CURRENT_TIMESTAMP '
-                        'WHERE id = ?',
-                        (int(is_employed), existing['id'])
-                    )
-
-                    if is_employed:
-                        await conn.execute(
-                            'UPDATE surveys_survey '
-                            'SET response_yes = response_yes + 1, response_no = response_no - 1 '
-                            'WHERE id = ?',
-                            (survey_id,)
-                        )
-                    else:
-                        await conn.execute(
-                            'UPDATE surveys_survey '
-                            'SET response_no = response_no + 1, response_yes = response_yes - 1 '
-                            'WHERE id = ?',
-                            (survey_id,)
-                        )
+            if existing:
+                previous_answer = bool(existing['is_employed'])
+                if previous_answer == is_employed:
                     return True
 
-                # Create a new response record
-                await conn.execute(
-                    'INSERT INTO students_employmentcheckin (student_id, survey_id, is_employed, checked_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
-                    (student_id, survey_id, int(is_employed))
+                await self._execute(
+                    'UPDATE students_employmentcheckin SET is_employed = %s, checked_at = CURRENT_TIMESTAMP WHERE id = %s',
+                    (int(is_employed), existing['id'])
                 )
+
                 if is_employed:
-                    await conn.execute(
-                        'UPDATE surveys_survey SET response_yes = response_yes + 1 WHERE id = ?',
-                        (survey_id,)
-                    )
+                    await self._execute('UPDATE surveys_survey SET response_yes = response_yes + 1, response_no = response_no - 1 WHERE id = %s', (survey_id,))
                 else:
-                    await conn.execute(
-                        'UPDATE surveys_survey SET response_no = response_no + 1 WHERE id = ?',
-                        (survey_id,)
-                    )
+                    await self._execute('UPDATE surveys_survey SET response_no = response_no + 1, response_yes = response_yes - 1 WHERE id = %s', (survey_id,))
                 return True
+
+            await self._execute(
+                'INSERT INTO students_employmentcheckin (student_id, survey_id, is_employed, checked_at) VALUES (%s, %s, %s, CURRENT_TIMESTAMP)',
+                (student_id, survey_id, int(is_employed))
+            )
+            if is_employed:
+                await self._execute('UPDATE surveys_survey SET response_yes = response_yes + 1 WHERE id = %s', (survey_id,))
+            else:
+                await self._execute('UPDATE surveys_survey SET response_no = response_no + 1 WHERE id = %s', (survey_id,))
+            return True
         except Exception as e:
-            logger.error(f"Error recording employment response: {e}")
+            logger.error(f'Error recording employment response: {e}')
             return False
 
-    # Logging
     async def log_action(self, user_id: int, action: str, details: str = None):
-        """Log user actions"""
         try:
-            async with self.get_connection() as conn:
-                await conn.execute('INSERT INTO common_botlog (user_id, action, details) VALUES (?, ?, ?)',
+            await self._execute('INSERT INTO logs (user_id, action, details) VALUES (%s, %s, %s)',
                                  (user_id, action, details))
         except Exception as e:
-            logger.error(f"Error logging action: {e}")
+            logger.error(f'Error logging action: {e}')
 
 # Initialize database instance
 db = Database()

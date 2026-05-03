@@ -8,10 +8,9 @@ import logging
 import os
 from dotenv import load_dotenv
 import datetime
-import sqlite3
 import json
-import os
-from dotenv import load_dotenv
+import pymysql
+import pymysql.cursors
 
 # Load environment variables
 load_dotenv()
@@ -36,22 +35,27 @@ def is_admin_user(user_id: int) -> bool:
 
 
 def get_backend_db():
-    """Get connection to backend SQLite database"""
-    # handlers/user.py -> handlers -> dipcom_bot -> dipcom-backend
-    backend_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    db_path = os.path.join(backend_root, 'db.sqlite3')
-    return sqlite3.connect(db_path)
+    """Get connection to backend MySQL database"""
+    return pymysql.connect(
+        host=os.getenv('DB_HOST', 'localhost'),
+        port=int(os.getenv('DB_PORT', 3306)),
+        user=os.getenv('DB_USER', 'bot_admin'),
+        password=os.getenv('DB_PASSWORD', 'SecurePass123'),
+        database=os.getenv('DB_NAME', 'resource_bot'),
+        charset='utf8mb4',
+        cursorclass=pymysql.cursors.DictCursor,
+        autocommit=True
+    )
 
 def get_student_by_phone(phone):
     """Get student from backend by phone"""
     try:
         conn = get_backend_db()
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM students_student WHERE phone = ?", (phone,))
-        result = cursor.fetchone()
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT * FROM students_student WHERE phone = %s', (phone,))
+            result = cursor.fetchone()
         conn.close()
-        return dict(result) if result else None
+        return result if result else None
     except Exception as e:
         logger.error(f"Error querying student by phone: {e}")
         return None
@@ -61,12 +65,11 @@ def get_student_by_telegram_id(telegram_id):
     """Get student from backend by Telegram user ID"""
     try:
         conn = get_backend_db()
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM students_student WHERE telegram_user_id = ?", (telegram_id,))
-        result = cursor.fetchone()
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT * FROM students_student WHERE telegram_user_id = %s', (telegram_id,))
+            result = cursor.fetchone()
         conn.close()
-        return dict(result) if result else None
+        return result if result else None
     except Exception as e:
         logger.error(f"Error querying student by telegram_id: {e}")
         return None
@@ -76,22 +79,20 @@ def update_student_meta(student_id, user_id, username):
     """Update student meta with telegram info"""
     try:
         conn = get_backend_db()
-        cursor = conn.cursor()
-        # First get current meta
-        cursor.execute("SELECT meta FROM students_student WHERE id = ?", (student_id,))
-        current_meta = cursor.fetchone()
-        if current_meta and current_meta[0]:
-            meta = current_meta[0]
-            if isinstance(meta, str):
-                meta = json.loads(meta)
-        else:
-            meta = {}
-        
-        meta['telegram_user_id'] = user_id
-        meta['telegram_username'] = username
-        
-        meta_json = json.dumps(meta)
-        cursor.execute("UPDATE students_student SET meta = ? WHERE id = ?", (meta_json, student_id))
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT meta FROM students_student WHERE id = %s', (student_id,))
+            current_meta = cursor.fetchone()
+            if current_meta and current_meta.get('meta'):
+                meta = current_meta.get('meta')
+                if isinstance(meta, str):
+                    meta = json.loads(meta)
+            else:
+                meta = {}
+
+            meta['telegram_user_id'] = user_id
+            meta['telegram_username'] = username
+            meta_json = json.dumps(meta)
+            cursor.execute('UPDATE students_student SET meta = %s WHERE id = %s', (meta_json, student_id))
         conn.commit()
         conn.close()
         return True
@@ -105,12 +106,9 @@ def update_backend_student_status_by_phone(phone, status):
         return False
     try:
         conn = get_backend_db()
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE students_student SET status = ? WHERE phone = ?",
-            (status, phone)
-        )
-        updated = cursor.rowcount
+        with conn.cursor() as cursor:
+            cursor.execute('UPDATE students_student SET status = %s WHERE phone = %s', (status, phone))
+            updated = cursor.rowcount
         conn.commit()
         conn.close()
         return updated > 0
@@ -122,22 +120,24 @@ def insert_student(name, father_name, phone, user_id, username, status: str = 'p
     """Insert new student to backend"""
     try:
         import uuid
-        from datetime import datetime
+        from datetime import datetime as dt
         student_id = f"s-{uuid.uuid4().hex[:8]}"
         conn = get_backend_db()
-        cursor = conn.cursor()
-        meta = json.dumps({'telegram_user_id': user_id, 'telegram_username': username})
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        today = datetime.now().strftime('%Y-%m-%d')
-        cursor.execute(
-            """INSERT INTO students_student 
-               (id, name, father_name, phone, telegram_user_id, telegram_username, meta, status, 
-                payment_status, tuition_fee, amount_paid, graduated, employment_status, registration_type,
-                registration_date, created_at, updated_at) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (student_id, name, father_name, phone, user_id, username, meta, status,
-             'not_paid', 12000, 0, 0, 'no', 'online', today, now, now)
-        )
+        with conn.cursor() as cursor:
+            meta = json.dumps({'telegram_user_id': user_id, 'telegram_username': username})
+            now = dt.now().strftime('%Y-%m-%d %H:%M:%S')
+            today = dt.now().strftime('%Y-%m-%d')
+            cursor.execute(
+                '''
+                    INSERT INTO students_student 
+                       (id, name, father_name, phone, telegram_user_id, telegram_username, meta, status, 
+                        payment_status, tuition_fee, amount_paid, graduated, employment_status, registration_type,
+                        registration_date, created_at, updated_at) 
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ''',
+                (student_id, name, father_name, phone, user_id, username, meta, status,
+                 'not_paid', 12000, 0, 0, 'no', 'online', today, now, now)
+            )
         conn.commit()
         conn.close()
         return student_id
