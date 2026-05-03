@@ -85,8 +85,8 @@ class Database:
         try:
             await self._execute(
                 '''
-                    INSERT INTO users (user_id, full_name, father_name, phone_number, username, status)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO users (user_id, full_name, father_name, phone_number, username, status, registered_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                     ON DUPLICATE KEY UPDATE full_name = VALUES(full_name), father_name = VALUES(father_name),
                         phone_number = VALUES(phone_number), username = VALUES(username), status = VALUES(status)
                 ''',
