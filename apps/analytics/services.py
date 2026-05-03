@@ -73,13 +73,7 @@ def get_analytics_overview() -> dict:
 
 	graded_students = [student for student in students if student.get("grade") is not None]
 	total_students = len(students)
-	active_batches = len(
-		[
-			batch
-			for batch in batches
-			if datetime.fromisoformat(batch["startDate"]) <= today <= datetime.fromisoformat(batch["endDate"])
-		]
-	)
+	active_batches = len(list_batches(active_only=True))
 
 	employment_rate = round((employed_count / (employed_count + unemployed_count)) * 100) if (employed_count + unemployed_count) else 0
 	average_grade = round(sum(student["grade"] for student in graded_students) / len(graded_students)) if graded_students else 0
