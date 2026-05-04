@@ -162,6 +162,9 @@ def _student_to_dict(student: Student) -> dict:
 		# treat it as fully paid so analytics match the students UI where paid implies no due.
 		"amountPaid": (int(student.amount_paid) if int(student.amount_paid) > 0 else int(student.tuition_fee)) if student.payment_status == "paid" else int(student.amount_paid),
 		"graduated": bool(getattr(student, "graduated", False)),
+			"graduationStatus": getattr(student, "graduation_status", None) or (
+				'graduated' if bool(getattr(student, "graduated", False)) or (student.grade is not None) else 'not_graduated'
+			),
 		"grade": student.grade,
 		"employmentStatus": student.employment_status,
 		"registrationType": student.registration_type,
@@ -220,10 +223,16 @@ def _apply_filters(filters: dict) -> list[Student]:
 		queryset = queryset.filter(grade__lt=70, grade__isnull=False)
 
 	graduated = filters.get("graduated")
-	if graduated == "graduated":
-		queryset = queryset.filter(graduated=True)
-	elif graduated == "not_graduated":
-		queryset = queryset.filter(graduated=False)
+	# support new graduation_status field if present on model
+	_has_status_field = any(f.name == 'graduation_status' for f in Student._meta.get_fields())
+	if _has_status_field:
+		if graduated in ("graduated", "not_graduated", "dropout"):
+			queryset = queryset.filter(graduation_status=graduated)
+	else:
+		if graduated == "graduated":
+			queryset = queryset.filter(graduated=True)
+		elif graduated == "not_graduated":
+			queryset = queryset.filter(graduated=False)
 
 	return list(queryset)
 
@@ -380,7 +389,13 @@ def create_student(payload: dict) -> dict:
 				(_tuition if payload.get("registrationType", "online") == "online" else 0),
 			),
 		),
+		# set both legacy boolean and new graduation_status if provided
 		"graduated": bool(payload.get("graduated", False)),
+		"graduation_status": (
+			(payload.get("graduationStatus") or payload.get("graduation_status"))
+			if payload.get("graduationStatus") or payload.get("graduation_status") is not None
+			else ("graduated" if bool(payload.get("graduated", False)) or grade is not None else "not_graduated")
+		),
 		"grade": grade,
 		"employment_status": payload.get("employmentStatus", "no"),
 		"registration_type": payload.get("registrationType", "online"),
@@ -421,6 +436,12 @@ def update_student(student_id: str, payload: dict) -> dict | None:
 		student.amount_paid = int(payload["amountPaid"])
 	if "graduated" in payload:
 		student.graduated = bool(payload["graduated"])
+	if "graduationStatus" in payload or "graduation_status" in payload:
+		new_status = payload.get("graduationStatus") or payload.get("graduation_status")
+		if new_status in ("graduated", "not_graduated", "dropout"):
+			student.graduation_status = new_status
+			# keep legacy boolean roughly in sync
+			student.graduated = True if new_status == "graduated" else False
 	if "grade" in payload:
 		student.grade = None if payload["grade"] == "" else payload["grade"]
 	if "employmentStatus" in payload:

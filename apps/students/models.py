@@ -22,6 +22,14 @@ class Student(models.Model):
 	payment_status = models.CharField(max_length=20, default="not_paid")
 	tuition_fee = models.PositiveIntegerField(default=12000)
 	amount_paid = models.PositiveIntegerField(default=0)
+	# graduation_status supports three states: 'graduated', 'not_graduated', 'dropout'
+	GRADUATION_STATUS_CHOICES = (
+		('graduated', 'Graduated'),
+		('not_graduated', 'Not Graduated'),
+		('dropout', 'Dropout'),
+	)
+	graduation_status = models.CharField(max_length=20, choices=GRADUATION_STATUS_CHOICES, default='not_graduated')
+	# keep legacy boolean for compatibility; kept in sync by services
 	graduated = models.BooleanField(default=False)
 	meta = models.JSONField(default=dict, blank=True)
 	grade = models.PositiveSmallIntegerField(null=True, blank=True)
