@@ -3,16 +3,28 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth import authenticate
 
+from .models import AuthSession
 from .serializers import serialize_auth_response, serialize_user
 
 SESSION_TTL_HOURS = 8
-_session_store: dict[str, dict] = {}
 
 
 def _is_expired(expires_at: datetime) -> bool:
 	return datetime.now(timezone.utc) > expires_at
+
+
+def _get_session(token: str) -> AuthSession | None:
+	session = AuthSession.objects.select_related('user').filter(token=token).first()
+	if not session:
+		return None
+
+	if _is_expired(session.expires_at):
+		session.delete()
+		return None
+
+	return session
 
 
 def login(username: str, password: str) -> dict | None:
@@ -26,46 +38,33 @@ def login(username: str, password: str) -> dict | None:
 
 	token = uuid4().hex
 	expires_at = datetime.now(timezone.utc) + timedelta(hours=SESSION_TTL_HOURS)
-	_session_store[token] = {
-		"userId": str(user.pk),
-		"expiresAt": expires_at,
-	}
+	AuthSession.objects.update_or_create(
+		token=token,
+		defaults={
+			"user": user,
+			"expires_at": expires_at,
+		},
+	)
 
 	return serialize_auth_response(token, user)
 
 
 def get_user_by_token(token: str) -> dict | None:
-	session = _session_store.get(token)
+	session = _get_session(token)
 	if not session:
 		return None
 
-	if _is_expired(session["expiresAt"]):
-		_session_store.pop(token, None)
-		return None
-
-	User = get_user_model()
-	user = User.objects.filter(pk=session["userId"]).first()
-	if not user:
-		return None
-
-	return serialize_user(user)
+	return serialize_user(session.user)
 
 
 def get_user_object_by_token(token: str):
-	session = _session_store.get(token)
+	session = _get_session(token)
 	if not session:
 		return None
 
-	if _is_expired(session["expiresAt"]):
-		_session_store.pop(token, None)
-		return None
-
-	User = get_user_model()
-	return User.objects.filter(pk=session["userId"]).first()
+	return session.user
 
 
 def logout(token: str) -> bool:
-	if token in _session_store:
-		_session_store.pop(token, None)
-		return True
-	return False
+	deleted, _ = AuthSession.objects.filter(token=token).delete()
+	return bool(deleted)
