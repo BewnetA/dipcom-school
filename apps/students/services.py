@@ -160,14 +160,20 @@ def _student_to_dict(student: Student) -> dict:
 		"tuitionFee": int(student.tuition_fee),
 		# If a record is marked as paid but `amount_paid` is zero (legacy/landing cases),
 		# treat it as fully paid so analytics match the students UI where paid implies no due.
-		"amountPaid": (int(student.amount_paid) if int(student.amount_paid) > 0 else int(student.tuition_fee)) if student.payment_status == "paid" else int(student.amount_paid),
+		"amountPaid": (
+			int(student.amount_paid)
+			if int(student.amount_paid) > 0
+			else int(student.tuition_fee)
+		) if student.payment_status == "paid" else int(student.amount_paid),
 		"graduated": bool(getattr(student, "graduated", False)),
-			"graduationStatus": getattr(student, "graduation_status", None) or (
-				'graduated' if bool(getattr(student, "graduated", False)) or (student.grade is not None) else 'not_graduated'
-			),
+		"graduationStatus": getattr(student, "graduation_status", None) or (
+			"graduated" if bool(getattr(student, "graduated", False)) or (student.grade is not None) else "not_graduated"
+		),
 		"grade": student.grade,
 		"employmentStatus": student.employment_status,
 		"registrationType": student.registration_type,
+		"dayChoice": (meta.get("dayChoice") if isinstance(meta, dict) else None),
+		"preferredTime": (meta.get("preferredTime") if isinstance(meta, dict) else None),
 		"status": getattr(student, "status", "pending"),
 		"rejectedAt": student.rejected_at.isoformat() if getattr(student, "rejected_at", None) else None,
 		"registrationDate": student.registration_date.isoformat() if student.registration_date else None,
@@ -310,11 +316,15 @@ def create_student(payload: dict) -> dict:
 		if _get(key) is None:
 			missing.append(label)
 
-	# classification/session/payment
-	if _get("classification.session") is None and _get("sessionType") is None:
-		missing.append("Session")
-	if _get("classification.payment") is None and _get("paymentType") is None:
-		missing.append("Payment")
+	day_choice = _get("dayChoice")
+	if day_choice is None:
+		missing.append("Day Choice")
+	elif day_choice not in ("MWF", "TTS", "Extension"):
+		raise ValueError("Day Choice must be one of MWF, TTS, or Extension")
+
+	preferred_time = _get("preferredTime")
+	if day_choice in ("MWF", "TTS") and preferred_time is None:
+		missing.append("Preferred Time")
 
 	# courses: expect payload.courses with at least one truthy
 	courses = payload.get("courses")
@@ -351,6 +361,25 @@ def create_student(payload: dict) -> dict:
 	batch_id = payload.get("batchId")
 	batch = Batch.objects.filter(id=batch_id).first() if batch_id else None
 
+	# Allow registration only when batch lifecycle status is open.
+	if batch and batch.status != 'open':
+		raise ValueError("This batch is not accepting registrations")
+
+	# Validate timeslot capacity
+	if batch:
+		from apps.batches.services import _check_timeslot_available
+		day_choice = payload.get("dayChoice")
+		preferred_time = payload.get("preferredTime")
+		
+		if day_choice in ("MWF", "TTS"):
+			if not preferred_time:
+				raise ValueError("Preferred time is required for MWF/TTS registration")
+			if not _check_timeslot_available(batch, preferred_time, day_choice):
+				raise ValueError(f"The {preferred_time} timeslot for {day_choice} is full. Please select another option.")
+		elif day_choice == "Extension":
+			if not _check_timeslot_available(batch, "Extension", "Extension"):
+				raise ValueError("The Extension timeslot is full. Please select another option.")
+
 	# determine default payment status: prefer explicit payload; for online
 	# registrations assume payment is provided (landing registrations are paid)
 	_default_payment = None
@@ -374,6 +403,14 @@ def create_student(payload: dict) -> dict:
 			_tuition = int(course_fees["office"])
 		else:
 			_tuition = int(course_fees["computer"])
+	_default_amount_paid = payload.get("amountPaid")
+	if _default_amount_paid is None:
+		if _default_payment == "paid":
+			_default_amount_paid = _tuition
+		elif _default_payment == "partial":
+			_default_amount_paid = round(_tuition * 0.5)
+		else:
+			_default_amount_paid = 0
 
 	create_kwargs = {
 		"id": student_id,
@@ -382,13 +419,7 @@ def create_student(payload: dict) -> dict:
 		"batch": batch,
 		"payment_status": _default_payment,
 		"tuition_fee": _tuition,
-		# default amount paid: explicit payload -> use it; otherwise if online assume fully paid
-		"amount_paid": int(
-			payload.get(
-				"amountPaid",
-				(_tuition if payload.get("registrationType", "online") == "online" else 0),
-			),
-		),
+		"amount_paid": int(_default_amount_paid),
 		# set both legacy boolean and new graduation_status if provided
 		"graduated": bool(payload.get("graduated", False)),
 		"graduation_status": (
@@ -409,6 +440,12 @@ def create_student(payload: dict) -> dict:
 	student = Student.objects.create(
 		**create_kwargs,
 	)
+
+	if batch:
+		from apps.batches.services import _is_batch_full
+		if _is_batch_full(batch):
+			batch.status = 'closed'
+			batch.save(update_fields=["status", "updated_at"])
 
 	return serialize_student(_student_to_dict(student))
 

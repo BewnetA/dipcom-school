@@ -11,8 +11,12 @@ from .services import (
 	create_batch,
 	delete_batch,
 	get_batch_by_id,
+	get_next_batch_name,
+	list_timeslots,
 	list_batches,
 	update_batch,
+	get_available_timeslots,
+	complete_batch,
 )
 
 
@@ -40,6 +44,24 @@ class BatchesCollectionView(View):
 		except ValueError as exc:
 			return JsonResponse({"detail": str(exc)}, status=400)
 		return JsonResponse(created, status=201)
+
+
+class NextBatchNameView(View):
+	def get(self, _request: HttpRequest):
+		return JsonResponse({"name": get_next_batch_name()})
+
+
+class TimeslotCollectionView(View):
+	def get(self, _request: HttpRequest):
+		items = list_timeslots()
+		return JsonResponse({"items": items, "count": len(items)})
+
+
+class AvailableTimeslotsView(View):
+	def get(self, request: HttpRequest, batch_id: str):
+		day_choice = request.GET.get("dayChoice", "MWF")
+		items = get_available_timeslots(batch_id, day_choice)
+		return JsonResponse({"items": items, "count": len(items)})
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -72,3 +94,16 @@ class BatchDetailView(View):
 
 	def post(self, _request: HttpRequest, _batch_id: str):
 		return HttpResponseNotAllowed(["GET", "PUT", "PATCH", "DELETE"])
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class BatchCompleteView(View):
+	def post(self, request: HttpRequest, batch_id: str):
+		"""Mark a batch as completed and graduate all students in it."""
+		try:
+			completed = complete_batch(batch_id)
+		except ValueError as exc:
+			return JsonResponse({"detail": str(exc)}, status=400)
+		if not completed:
+			return JsonResponse({"detail": "Batch not found"}, status=404)
+		return JsonResponse(completed)

@@ -61,6 +61,14 @@ def create_registration(payload: dict) -> dict:
 	if _phone_exists_anywhere(phone):
 		raise ValueError("Phone number is already registered")
 
+	day_choice = str(payload.get("dayChoice", "")).strip()
+	if day_choice not in {"MWF", "TTS", "Extension"}:
+		raise ValueError("Day choice is required (MWF, TTS, or Extension)")
+
+	preferred_time = str(payload.get("preferredTime", "")).strip()
+	if day_choice != "Extension" and not preferred_time:
+		raise ValueError("Preferred time is required for MWF/TTS students")
+
 	registration_type = payload.get("registrationType", "online")
 	if registration_type == "online" and not payload.get("paymentScreenshot"):
 		raise ValueError("Payment screenshot is required for online registration")
@@ -71,6 +79,12 @@ def create_registration(payload: dict) -> dict:
 
 	batch_id = payload.get("batchId")
 	batch = Batch.objects.filter(id=batch_id).first() if batch_id else None
+	# First attempt to create the Student record so any validation errors
+	# (capacity, closed batch, etc.) are surfaced to the caller and the
+	# landing registration is not created when the batch cannot accept more
+	# students. Let exceptions propagate as ValueError so the view returns
+	# a 400 with a meaningful message.
+	created_student = create_student_record(payload)
 
 	registration = LandingRegistration.objects.create(
 		id=registration_id,
@@ -78,17 +92,8 @@ def create_registration(payload: dict) -> dict:
 		phone=phone,
 		batch=batch,
 		registration_type=registration_type,
-		learning_time=payload.get("learningTime", "morning"),
+		learning_time=preferred_time or payload.get("learningTime", "morning"),
 		meta=payload,
 	)
-
-	# Also create a Student record so landing registrations appear in approvals
-	# and can be approved by admins. Ignore errors to keep landing API resilient.
-	# create student record using the full payload so the Student.meta contains
-	# the full registration details for later inspection.
-	try:
-		create_student_record(payload)
-	except Exception:
-		pass
 
 	return serialize_registration(_registration_to_dict(registration))
