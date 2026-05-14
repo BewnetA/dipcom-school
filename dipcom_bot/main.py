@@ -164,12 +164,15 @@ class ResourceBot:
             states={
                 BROADCAST_MESSAGE: [
                     MessageHandler(filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL, broadcast_message),
-                    CommandHandler('cancel_broadcast', broadcast_cancel),  # Add command handler
+                    CommandHandler('cancel_broadcast', broadcast_cancel),
+                    CallbackQueryHandler(broadcast_confirmation_callback, pattern='^(confirm_broadcast|cancel_broadcast)$'),
                 ],
             },
             fallbacks=[CommandHandler('cancel', broadcast_cancel)],
             name="broadcast",
-            persistent=False
+            persistent=False,
+            per_message=False,
+            per_chat=True
         )
         
         # Admin enroll user conversation
@@ -262,7 +265,6 @@ class ResourceBot:
         self.application.add_handler(MessageHandler(filters.Regex('^🔙 Back to Admin Panel$'), admin_panel))
         self.application.add_handler(MessageHandler(filters.Regex('^🔙 Back to Main Menu$'), admin_panel))
         self.application.add_handler(CallbackQueryHandler(handle_approval_callback, pattern='^(approve_user_|view_user_)'))
-        # Add broadcast confirmation callback handler
         self.application.add_handler(CallbackQueryHandler(broadcast_confirmation_callback, pattern='^(confirm_broadcast|cancel_broadcast)$'))
         self.application.add_handler(CallbackQueryHandler(handle_followup_response, pattern='^employment_followup_'))
         # Callback query handler

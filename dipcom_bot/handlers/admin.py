@@ -71,8 +71,7 @@ async def handle_followup_confirm(update: Update, context: ContextTypes.DEFAULT_
 
     if query.data == 'cancel_followup_send':
         await query.edit_message_text(
-            "❌ Follow-up send cancelled.",
-            reply_markup=get_admin_panel_keyboard()
+            "❌ Follow-up send cancelled."
         )
         return ConversationHandler.END
 
@@ -83,8 +82,7 @@ async def handle_followup_confirm(update: Update, context: ContextTypes.DEFAULT_
 
     if not graduated_students:
         await query.edit_message_text(
-            "⚠️ No graduated students found to send the follow-up.",
-            reply_markup=get_admin_panel_keyboard()
+            "⚠️ No graduated students found to send the follow-up."
         )
         return ConversationHandler.END
 
@@ -112,8 +110,7 @@ async def handle_followup_confirm(update: Update, context: ContextTypes.DEFAULT_
     try:
         await query.edit_message_text(
             f"✅ Follow-up completed. Sent to *{sent_count}* graduated student(s) and failed for *{failed_count}* student(s).",
-            parse_mode='Markdown',
-            reply_markup=get_admin_panel_keyboard()
+            parse_mode='Markdown'
         )
     except Exception as e:
         logger.error(f"Failed to edit followup completion message: {e}")
@@ -527,8 +524,7 @@ async def handle_upload_callback(update: Update, context: ContextTypes.DEFAULT_T
     
     elif query.data == "back_to_admin_upload":
         await query.edit_message_text(
-            "🔧 Returning to Admin Panel...",
-            reply_markup=get_admin_panel_keyboard()
+            "🔧 Returning to Admin Panel..."
         )
         return ConversationHandler.END
     
@@ -625,14 +621,23 @@ async def enroll_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No pending users to enroll.", reply_markup=get_user_management_keyboard())
         return ConversationHandler.END
     
+    MAX_BUTTONS = 20
     keyboard = []
-    for user in pending_users:
+    displayed_users = pending_users[:MAX_BUTTONS]
+    for user in displayed_users:
         keyboard.append([InlineKeyboardButton(f"{user['full_name']} (ID: {user['user_id']})", 
                                              callback_data=f"enroll_{user['user_id']}")])
     keyboard.append([InlineKeyboardButton("🔙 Cancel", callback_data="back_to_user_management")])
     
+    extra_text = ""
+    if len(pending_users) > MAX_BUTTONS:
+        extra_text = (
+            f"\n\n⚠️ There are {len(pending_users)} pending users, showing the first {MAX_BUTTONS}. "
+            "Use pending enrollment again after reviewing these users."
+        )
+    
     await update.message.reply_text(
-        "✅ *Enroll User*\n\nSelect a user to enroll:",
+        f"✅ *Enroll User*\n\nSelect a user to enroll:{extra_text}",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
@@ -670,8 +675,7 @@ async def handle_remove_callback(update: Update, context: ContextTypes.DEFAULT_T
     
     if query.data == "back_to_user_management":
         await query.edit_message_text(
-            "👥 User Management",
-            reply_markup=get_user_management_keyboard()
+            "👥 User Management"
         )
         return ConversationHandler.END
     
@@ -711,8 +715,7 @@ async def handle_remove_callback(update: Update, context: ContextTypes.DEFAULT_T
                 logger.error(f"Failed to notify user {user_id}: {e}")
         else:
             await query.edit_message_text(
-                "❌ Failed to remove enrollment. Please try again.",
-                reply_markup=get_user_management_keyboard()
+                "❌ Failed to remove enrollment. Please try again."
             )
     
     return ConversationHandler.END
@@ -727,8 +730,7 @@ async def handle_enroll_callback(update: Update, context: ContextTypes.DEFAULT_T
     
     if query.data == "back_to_user_management":
         await query.edit_message_text(
-            "👥 User Management",
-            reply_markup=get_user_management_keyboard()
+            "👥 User Management"
         )
         return ConversationHandler.END
     
@@ -821,7 +823,14 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i, user in enumerate(users[:20], 1):
         message += f"{i}. *{user['full_name']}*\n"
         message += f"   🆔 ID: `{user['user_id']}`\n"
-        message += f"   📅 Registered: {user['registered_at'][:10]}\n\n"
+        # Format the datetime properly
+        registered_date = user['registered_at']
+        if isinstance(registered_date, str):
+            display_date = registered_date[:10]
+        else:
+            # It's a datetime object, format it
+            display_date = registered_date.strftime('%Y-%m-%d')
+        message += f"   📅 Registered: {display_date}\n\n"
     
     if len(users) > 20:
         message += f"\n*Showing 20 of {len(users)} users*"
@@ -857,10 +866,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if broadcast is active
     if not context.user_data.get('broadcast_active', False):
-        await update.message.reply_text(
-            "❌ Broadcast is not active. Use 'Broadcast' from admin panel to start.",
-            reply_markup=get_admin_panel_keyboard()
-        )
+        # Broadcast has been completed or cancelled, end the conversation
         return ConversationHandler.END
     
     # Check if user wants to cancel
@@ -872,16 +878,18 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
     
-    # Ignore button presses and commands during broadcast
-    if update.message.text and update.message.text.startswith('/'):
+    # If the admin sends another command during broadcast, cancel it and exit
+    if update.message.text and update.message.text.startswith('/') and update.message.text != '/cancel_broadcast':
+        context.user_data['broadcast_active'] = False
+        context.user_data.pop('broadcast_content', None)
         await update.message.reply_text(
-            "⚠️ Command detected. To cancel broadcast, type: /cancel_broadcast\n\n"
-            "Otherwise, send the actual message you want to broadcast.",
-            parse_mode='Markdown'
+            "⚠️ Broadcast interrupted. The broadcast sequence has been cancelled.\n\n"
+            "Please use the admin menu again or send the command you intended to use.",
+            reply_markup=get_admin_panel_keyboard()
         )
-        return BROADCAST_MESSAGE
+        return ConversationHandler.END
     
-    # Check if the message is a button press (admin panel buttons)
+    # If the admin presses a keyboard button while in broadcast flow, cancel the broadcast state
     button_texts = [
         "➕ Add Module", "🗑 Delete Module", "📤 Upload", 
         "📋 Modules", "👥 Users", "📢 Broadcast", "📣 Follow-Up", "✏️ Set Question",
@@ -895,13 +903,14 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     if update.message.text and update.message.text in button_texts:
+        context.user_data['broadcast_active'] = False
+        context.user_data.pop('broadcast_content', None)
         await update.message.reply_text(
-            "⚠️ Cannot broadcast button text!\n\n"
-            "Please send the actual message you want to broadcast.\n"
-            "To cancel, type: /cancel_broadcast",
+            "⚠️ Broadcast interrupted. The broadcast sequence has been cancelled.\n\n"
+            "Please select your next action from the admin panel again.",
             reply_markup=get_admin_panel_keyboard()
         )
-        return BROADCAST_MESSAGE
+        return ConversationHandler.END
     
     # Get all enrolled users
     users = await db.get_all_users(status='enrolled')

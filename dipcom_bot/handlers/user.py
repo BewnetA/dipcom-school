@@ -306,13 +306,22 @@ async def register_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if success:
                 if bot_status == 'enrolled':
-                    await update.message.reply_text(
-                        f"✅ *Registration Successful!*\n\n"
-                        f"Welcome back, {student['name']}!\n\n"
-                        f"✅ Your account is active and you can access all modules.",
-                        parse_mode='Markdown',
-                        reply_markup=get_main_keyboard(False, True)
-                    )
+                    if is_admin:
+                        await update.message.reply_text(
+                            f"✅ *Admin Registration Successful!*\n\n"
+                            f"Welcome back, {student['name']}!\n\n"
+                            f"👑 Your admin account is active and you can access admin tools below.",
+                            parse_mode='Markdown',
+                            reply_markup=get_admin_panel_keyboard()
+                        )
+                    else:
+                        await update.message.reply_text(
+                            f"✅ *Registration Successful!*\n\n"
+                            f"Welcome back, {student['name']}!\n\n"
+                            f"✅ Your account is active and you can access all modules.",
+                            parse_mode='Markdown',
+                            reply_markup=get_main_keyboard(False, True)
+                        )
                 else:
                     await update.message.reply_text(
                         f"✅ *Registration Received!*\n\n"
@@ -387,7 +396,7 @@ async def register_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"Welcome, {full_name}!\n\n"
                         "👑 Your admin account is active and you can access all admin features.",
                         parse_mode='Markdown',
-                        reply_markup=ReplyKeyboardRemove()
+                        reply_markup=get_admin_panel_keyboard()
                     )
                 else:
                     await update.message.reply_text(
