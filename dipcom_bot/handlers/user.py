@@ -158,12 +158,12 @@ def insert_student(name, father_name, phone, user_id, username, status: str = 'p
                 '''
                     INSERT INTO students_student 
                        (id, name, father_name, phone, telegram_user_id, telegram_username, meta, status, 
-                        payment_status, tuition_fee, amount_paid, graduated, employment_status, registration_type,
+                        payment_status, tuition_fee, amount_paid, graduation_status, graduated, employment_status, registration_type,
                         registration_date, created_at, updated_at) 
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ''',
                 (student_id, name, father_name, phone, user_id, username, meta, status,
-                    'not_paid', course_fees['computer'], 0, 0, 'no', 'bot', today, now, now)
+                    'not_paid', course_fees['computer'], 0, 'not_graduated', 0, 'no', 'bot', today, now, now)
             )
         conn.commit()
         conn.close()
