@@ -28,6 +28,12 @@ class Batch(models.Model):
 	extension_capacity = models.PositiveIntegerField(null=True, blank=True)
 	computer_course_payment = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
 	office_course_payment = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+	computer_course_payment_mwf = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+	computer_course_payment_tts = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+	computer_course_payment_extension = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+	office_course_payment_mwf = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+	office_course_payment_tts = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+	office_course_payment_extension = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
 	status = models.CharField(
 		max_length=20,
 		choices=[('open', 'Open'), ('closed', 'Closed'), ('completed', 'Completed')],

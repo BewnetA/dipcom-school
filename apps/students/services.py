@@ -42,6 +42,43 @@ def _value_exists(value: object) -> bool:
 	return value not in (None, "", [])
 
 
+def _batch_shift_payment(batch: Batch | None, course: str, day_choice: str | None) -> int | None:
+	if not batch:
+		return None
+
+	suffix_map = {
+		"mwf": "mwf",
+		"tts": "tts",
+		"extension": "extension",
+	}
+	suffix = suffix_map.get(str(day_choice or "").strip().lower())
+	if not suffix:
+		return None
+
+	field_name = f"{course}_course_payment_{suffix}"
+	value = getattr(batch, field_name, None)
+	if value not in (None, ""):
+		return int(value)
+
+	legacy_value = getattr(batch, f"{course}_course_payment", None)
+	if legacy_value not in (None, ""):
+		return int(legacy_value)
+
+	return None
+
+
+def _calculate_tuition(batch: Batch | None, courses: dict, day_choice: str | None) -> int:
+	course_fees = get_course_fees()
+	total = 0
+	for course in ("computer", "office"):
+		if isinstance(courses, dict) and courses.get(course):
+			batch_price = _batch_shift_payment(batch, course, day_choice)
+			if batch_price is None:
+				batch_price = int(course_fees[course])
+			total += int(batch_price)
+	return total
+
+
 def _registration_completion_missing_fields(student: Student) -> list[str]:
 	meta = _meta_dict(student)
 	missing: list[str] = []
@@ -80,12 +117,10 @@ def _registration_completion_missing_fields(student: Student) -> list[str]:
 	education = meta.get("education") if isinstance(meta.get("education"), dict) else {}
 	if not _value_exists(education.get("level")):
 		missing.append("Education Level")
-
-	classification = meta.get("classification") if isinstance(meta.get("classification"), dict) else {}
-	if not _value_exists(classification.get("session")):
-		missing.append("Session")
-	if not _value_exists(classification.get("payment")):
-		missing.append("Payment Plan")
+	if not _value_exists(meta.get("dayChoice")):
+		missing.append("Day Choice")
+	elif meta.get("dayChoice") != "Extension" and not _value_exists(meta.get("preferredTime")):
+		missing.append("Preferred Time")
 
 	courses = meta.get("courses") if isinstance(meta.get("courses"), dict) else {}
 	has_course = any(bool(value) for value in courses.values())
@@ -395,14 +430,8 @@ def create_student(payload: dict) -> dict:
 	if "tuitionFee" in payload and payload.get("tuitionFee") is not None:
 		_tuition = int(payload["tuitionFee"])
 	else:
-		course_fees = get_course_fees()
 		courses = payload.get("courses") or {}
-		if isinstance(courses, dict) and courses.get("computer") and courses.get("office"):
-			_tuition = int(course_fees["computer"]) + int(course_fees["office"])
-		elif isinstance(courses, dict) and courses.get("office"):
-			_tuition = int(course_fees["office"])
-		else:
-			_tuition = int(course_fees["computer"])
+		_tuition = _calculate_tuition(batch, courses if isinstance(courses, dict) else {}, payload.get("dayChoice"))
 	_default_amount_paid = payload.get("amountPaid")
 	if _default_amount_paid is None:
 		if _default_payment == "paid":
@@ -501,6 +530,11 @@ def update_student(student_id: str, payload: dict) -> dict | None:
 		else:
 			merged_meta = existing_meta
 		student.meta = merged_meta
+
+	if "tuitionFee" not in payload and any(key in payload for key in ("batchId", "meta", "courses", "dayChoice", "preferredTime")):
+		tuition_courses = _meta_dict(student).get("courses") if isinstance(_meta_dict(student).get("courses"), dict) else {}
+		tuition_day_choice = _meta_dict(student).get("dayChoice")
+		student.tuition_fee = _calculate_tuition(student.batch, tuition_courses if isinstance(tuition_courses, dict) else {}, tuition_day_choice)
 
 	student.save()
 	return serialize_student(_student_to_dict(student))

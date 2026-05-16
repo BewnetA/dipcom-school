@@ -52,6 +52,12 @@ def _batch_to_dict(batch: Batch) -> dict:
 		"extensionCapacity": batch.extension_capacity,
 		"computerCoursePayment": float(batch.computer_course_payment) if batch.computer_course_payment else None,
 		"officeCoursePayment": float(batch.office_course_payment) if batch.office_course_payment else None,
+		"computerCoursePaymentMWF": float(batch.computer_course_payment_mwf) if batch.computer_course_payment_mwf else None,
+		"computerCoursePaymentTTS": float(batch.computer_course_payment_tts) if batch.computer_course_payment_tts else None,
+		"computerCoursePaymentExtension": float(batch.computer_course_payment_extension) if batch.computer_course_payment_extension else None,
+		"officeCoursePaymentMWF": float(batch.office_course_payment_mwf) if batch.office_course_payment_mwf else None,
+		"officeCoursePaymentTTS": float(batch.office_course_payment_tts) if batch.office_course_payment_tts else None,
+		"officeCoursePaymentExtension": float(batch.office_course_payment_extension) if batch.office_course_payment_extension else None,
 		"status": batch.status,
 		"createdAt": batch.created_at.isoformat() if getattr(batch, "created_at", None) else None,
 	}
@@ -415,6 +421,12 @@ def create_batch(payload: dict) -> dict:
 		extension_capacity=payload.get("extensionCapacity"),
 		computer_course_payment=payload.get("computerCoursePayment"),
 		office_course_payment=payload.get("officeCoursePayment"),
+		computer_course_payment_mwf=payload.get("computerCoursePaymentMWF"),
+		computer_course_payment_tts=payload.get("computerCoursePaymentTTS"),
+		computer_course_payment_extension=payload.get("computerCoursePaymentExtension"),
+		office_course_payment_mwf=payload.get("officeCoursePaymentMWF"),
+		office_course_payment_tts=payload.get("officeCoursePaymentTTS"),
+		office_course_payment_extension=payload.get("officeCoursePaymentExtension"),
 	)
 	return serialize_batch(_compute_batch_metrics(_batch_to_dict(batch)))
 
@@ -455,6 +467,18 @@ def update_batch(batch_id: str, payload: dict) -> dict | None:
 		batch.computer_course_payment = payload["computerCoursePayment"]
 	if "officeCoursePayment" in payload:
 		batch.office_course_payment = payload["officeCoursePayment"]
+	if "computerCoursePaymentMWF" in payload:
+		batch.computer_course_payment_mwf = payload["computerCoursePaymentMWF"]
+	if "computerCoursePaymentTTS" in payload:
+		batch.computer_course_payment_tts = payload["computerCoursePaymentTTS"]
+	if "computerCoursePaymentExtension" in payload:
+		batch.computer_course_payment_extension = payload["computerCoursePaymentExtension"]
+	if "officeCoursePaymentMWF" in payload:
+		batch.office_course_payment_mwf = payload["officeCoursePaymentMWF"]
+	if "officeCoursePaymentTTS" in payload:
+		batch.office_course_payment_tts = payload["officeCoursePaymentTTS"]
+	if "officeCoursePaymentExtension" in payload:
+		batch.office_course_payment_extension = payload["officeCoursePaymentExtension"]
 
 	if batch.start_date and batch.end_date and batch.registration_end_date:
 		_validate_batch_dates(batch.start_date, batch.end_date, batch.registration_end_date)
