@@ -489,6 +489,6 @@ def update_batch(batch_id: str, payload: dict) -> dict | None:
 
 def delete_batch(batch_id: str) -> bool:
 	if Student.objects.filter(batch_id=batch_id).exists():
-		raise ValueError("This batch has students inside it, so it cannot be deleted.")
+		raise ValueError("You can't delete a batch while students are in it.")
 	deleted, _ = Batch.objects.filter(id=batch_id).delete()
 	return bool(deleted)
