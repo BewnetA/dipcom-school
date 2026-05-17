@@ -536,9 +536,16 @@ def update_student(student_id: str, payload: dict) -> dict | None:
 		tuition_day_choice = _meta_dict(student).get("dayChoice")
 		student.tuition_fee = _calculate_tuition(student.batch, tuition_courses if isinstance(tuition_courses, dict) else {}, tuition_day_choice)
 
-	# If admin marks student as paid but did not provide amountPaid, set amount_paid to tuition_fee
-	if "paymentStatus" in payload and payload.get("paymentStatus") == "paid" and "amountPaid" not in payload:
-		student.amount_paid = int(getattr(student, "tuition_fee", 0) or 0)
+	# If admin changes payment status without sending amountPaid, keep amount_paid aligned with status.
+	if "paymentStatus" in payload and "amountPaid" not in payload:
+		payment_status = payload.get("paymentStatus")
+		tuition = int(getattr(student, "tuition_fee", 0) or 0)
+		if payment_status == "paid":
+			student.amount_paid = tuition
+		elif payment_status == "partial":
+			student.amount_paid = round(tuition * 0.5)
+		elif payment_status == "not_paid":
+			student.amount_paid = 0
 
 	student.save()
 	return serialize_student(_student_to_dict(student))

@@ -87,7 +87,10 @@ class BatchDetailView(View):
 		return self.put(request, batch_id)
 
 	def delete(self, _request: HttpRequest, batch_id: str):
-		deleted = delete_batch(batch_id)
+		try:
+			deleted = delete_batch(batch_id)
+		except ValueError as exc:
+			return JsonResponse({"detail": str(exc)}, status=400)
 		if not deleted:
 			return JsonResponse({"detail": "Batch not found"}, status=404)
 		return JsonResponse({"deleted": True})
